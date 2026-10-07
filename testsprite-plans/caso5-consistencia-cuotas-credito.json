@@ -1,0 +1,63 @@
+{
+  "projectId": "048cbedc-dc3e-4da1-8cf6-c82e9b869609",
+  "type": "frontend",
+  "name": "Caso 5 - Consistencia de cuotas Credito PYCCA pantalla vs documento",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "Navigate to http://127.0.0.1:4200 (login page)"
+    },
+    {
+      "type": "action",
+      "description": "Click 'Iniciar Sesión con Microsoft'. On the Microsoft page type 'desarrollopy@pycca.com', click 'Next', type the password 'cdPY2027!*', click 'Sign in', and click 'Yes' if a 'Stay signed in?' prompt appears"
+    },
+    {
+      "type": "assertion",
+      "description": "The authenticated POS dashboard is visible (cards 'Facturación', 'Entrega de Caja', 'Historial de impresión')"
+    },
+    {
+      "type": "action",
+      "description": "PRECONDITION: click 'IR' on 'Facturación'. If a red notification says 'No puede acceder a esta funcionalidad porque tiene entregas de caja pendientes', go back to the dashboard, open 'Entrega de Caja', click 'Procesar', complete the 'Autorización de Administrador' modal by typing the exact text '%21310300;432940;JAIME GABRIEL HURTADO ALVAREZ' into the 'Tarjeta de administrador' field followed by Enter (the leading '%' and the Enter are mandatory), then type '1979' in 'Clave de administrador' and click 'Confirmar'. Accept the success dialog and retry opening Facturación until it opens"
+    },
+    {
+      "type": "action",
+      "description": "load 10 articles: for each SKU (O22652, O22654, O22655, O22657, O22955, O22976, O22977, O22978, O22979, O23546) type it into the 'Buscar producto por SKU' field and press Enter; after each one set its row quantity to 3 and press Tab. If an article shows a red 'Pendiente' label, click it and fill every field (Homologacion='HOM-2026-001', Imei='359747505623812', Marca='GENERICA', Modelo='MODELO-TEST') then click 'Continuar'"
+    },
+    {
+      "type": "action",
+      "description": "Click 'Continuar' to reach the payment screen and select the 'CREDITO PYCCA' payment method"
+    },
+    {
+      "type": "action",
+      "description": "Type a cedula into the 'Cédula' field of the credit form and press Tab, then open the 'Crédito' dropdown. Try these cedulas in order until one shows a card WITHOUT a red padlock icon: 0919522151, 2450681438, 0922154976, 0923022339, 1200007126, 0925688160, 1205902859, 0916835226, 0962366118, 1203874142"
+    },
+    {
+      "type": "assertion",
+      "description": "PRECONDITION CHECK: report whether any cedula offered a selectable (non-padlocked) card. As of 24/09/2026 all 24 pool cedulas showed a padlocked card and the only working one (0301309787) was overdrawn (cupo $250.00, disponible $0.00, saldo $255.34). If every card is padlocked, STOP here and report the precondition as unmet"
+    },
+    {
+      "type": "action",
+      "description": "Select the usable card, then set 'Valor a pagar' to the amount shown in 'Crédito disponible' (or leave the pre-filled total if the credit covers it), and open the 'Financiamiento' dropdown selecting an option with interest, e.g. 'DIF. CON INTERESES - (3 CUOTAS)'"
+    },
+    {
+      "type": "assertion",
+      "description": "Capture from the screen: the per-instalment amount shown in 'Cuota', the number of instalments in the financing label, and the 'Valor a pagar'. All three must be greater than zero"
+    },
+    {
+      "type": "action",
+      "description": "Click 'Agregar' to register the credit payment"
+    },
+    {
+      "type": "assertion",
+      "description": "The registered payment row shows the SAME financing plan and the SAME instalment amount captured from the simulation"
+    },
+    {
+      "type": "action",
+      "description": "Cover any remaining balance with 'EFECTIVO' and click 'Continuar'. If a 'Seleccionar regalo' modal appears, choose the first product, click 'Aceptar' and cover the new balance. If a 'Recalcular financiamiento' warning appears on the credit row, click the refresh icon in its 'Acciones' column and re-select the same financing plan, then click 'Agregar'. Click 'Continuar', then 'Procesar' for each registered payment, completing the cash dialog when it appears"
+    },
+    {
+      "type": "assertion",
+      "description": "A 'Transacción finalizada' confirmation is shown and the instalment amount and plan in the issued document match exactly the values captured from the on-screen simulation (100% mathematical consistency)"
+    }
+  ]
+}

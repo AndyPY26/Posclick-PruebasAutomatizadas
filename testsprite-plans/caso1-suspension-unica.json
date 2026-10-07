@@ -1,0 +1,63 @@
+{
+  "projectId": "048cbedc-dc3e-4da1-8cf6-c82e9b869609",
+  "type": "frontend",
+  "name": "Caso 1 - Restriccion de suspension unica y recuperacion unitaria",
+  "planSteps": [
+    {
+      "type": "action",
+      "description": "Navigate to http://127.0.0.1:4200 (login page)"
+    },
+    {
+      "type": "action",
+      "description": "Click 'Iniciar Sesión con Microsoft'. On the Microsoft page type 'desarrollopy@pycca.com', click 'Next', type the password 'cdPY2027!*', click 'Sign in', and click 'Yes' if a 'Stay signed in?' prompt appears"
+    },
+    {
+      "type": "assertion",
+      "description": "The authenticated POS dashboard is visible (cards 'Facturación', 'Entrega de Caja', 'Historial de impresión')"
+    },
+    {
+      "type": "action",
+      "description": "PRECONDITION: click 'IR' on 'Facturación'. If a red notification says 'No puede acceder a esta funcionalidad porque tiene entregas de caja pendientes', go back to the dashboard, open 'Entrega de Caja', click 'Procesar', complete the 'Autorización de Administrador' modal by typing the exact text '%21310300;432940;JAIME GABRIEL HURTADO ALVAREZ' into the 'Tarjeta de administrador' field followed by Enter (the leading '%' and the Enter are mandatory), then type '1979' in 'Clave de administrador' and click 'Confirmar'. Accept the success dialog and retry opening Facturación until it opens"
+    },
+    {
+      "type": "action",
+      "description": "TRANSACCIÓN A: load 10 articles: for each SKU (O22652, O22654, O22655, O22657, O22955, O22976, O22977, O22978, O22979, O23546) type it into the 'Buscar producto por SKU' field and press Enter; after each one set its row quantity to 3 and press Tab. If an article shows a red 'Pendiente' label, click it and fill every field (Homologacion='HOM-2026-001', Imei='359747505623812', Marca='GENERICA', Modelo='MODELO-TEST') then click 'Continuar'"
+    },
+    {
+      "type": "action",
+      "description": "Click the suspend button in the toolbar above the product table (pause-circle icon). A 'Suspender transacción' confirmation appears warning that discounts, deliveries and warranties will be lost — click 'Confirmar'. NOTE: suspending does NOT require supervisor authorization"
+    },
+    {
+      "type": "assertion",
+      "description": "Transaction A is suspended: the cart is emptied and the total returns to $0.00"
+    },
+    {
+      "type": "action",
+      "description": "TRANSACCIÓN B: load 10 articles: for each SKU (O23553, O24144, O28268, O48324, O48357, O60832, O60854, O78081, D01461, D01463) type it into the 'Buscar producto por SKU' field and press Enter; after each one set its row quantity to 3 and press Tab. If an article shows a red 'Pendiente' label, click it and fill every field (Homologacion='HOM-2026-001', Imei='359747505623812', Marca='GENERICA', Modelo='MODELO-TEST') then click 'Continuar'"
+    },
+    {
+      "type": "assertion",
+      "description": "The system prevents a second suspension: the pause-circle suspend button is now DISABLED (greyed out, non-clickable, attribute disabled in the DOM). IMPORTANT: the app does NOT display a message such as 'Ya existe una transacción suspendida' — the restriction is enforced by disabling the control"
+    },
+    {
+      "type": "action",
+      "description": "Cancel Transaction B: click 'Cancelar' in the right panel and confirm with 'Sí, eliminar'"
+    },
+    {
+      "type": "action",
+      "description": "Click the recover-suspended button located next to the 'Buscar producto por SKU' field (play-circle icon showing a small red badge), select the single row in the 'Transacciones suspendidas' modal using its radio button, and click 'Recuperar'"
+    },
+    {
+      "type": "assertion",
+      "description": "The recovered cart contains exactly the 10 SKUs of Transaction A (O22652, O22654, O22655, O22657, O22955, O22976, O22977, O22978, O22979, O23546) with their original quantities. None of the Transaction B SKUs are present"
+    },
+    {
+      "type": "action",
+      "description": "Click the recover-suspended button again"
+    },
+    {
+      "type": "assertion",
+      "description": "The modal table shows 'No se encontraron datos' and a notification reads 'No se encontraron transacciones suspendidas para el usuario'"
+    }
+  ]
+}

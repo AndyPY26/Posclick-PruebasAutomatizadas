@@ -1,0 +1,33 @@
+# Dependencias
+node_modules/
+
+# Evidencias y reportes generados por Playwright
+evidencias/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# TypeScript / build
+*.tsbuildinfo
+dist/
+build/
