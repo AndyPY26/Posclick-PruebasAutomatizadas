@@ -56,7 +56,7 @@ Ver una traza específica:
 npx playwright show-trace evidencias/test-results/**/trace.zip
 ```
 
-## Estructura
+## Estructura (Page Object Model)
 
 ```
 e2e/
@@ -64,13 +64,47 @@ e2e/
 ├── global-setup.ts             # libera entregas de caja pendientes
 ├── tsconfig.json
 ├── package.json
-├── context.md                  # notas internas de la suite
+├── context.md                  # RAG / notas internas de la suite
+├── PLANTILLA-CASO-NUEVO.md     # prompt para generar casos nuevos con LLM
 ├── tests/
-│   ├── pos.fixtures.ts              # dataset + ~65 selectores + helpers
-│   └── pos-flujos-avanzados.spec.ts # 5 casos
+│   ├── pos-flujos-avanzados.spec.ts  # 5 casos (solo intención de negocio)
+│   ├── fixtures/
+│   │   ├── dataset.ts                # pools, credenciales, utilidades puras
+│   │   └── pos.fixture.ts            # test.extend con `pos`, loginPage, dashboardPage
+│   └── pages/                        # Page Object Model — una clase por pantalla
+│       ├── LoginPage.ts
+│       ├── DashboardPage.ts
+│       ├── InvoicePage.ts            # carrito + oferta especial + suspensión
+│       ├── CargarFacturaDialog.ts
+│       ├── DeliveryPage.ts           # entrega futura / Envío a
+│       ├── PaymentPage.ts            # + CreditoPyccaForm (sub-componente)
+│       ├── SupervisorAuthDialog.ts
+│       ├── SuspendedTxDialog.ts
+│       ├── BoxDeliveryPage.ts
+│       ├── PrintHistoryPage.ts
+│       └── components/
+│           └── PersonSearchComponent.ts  # usado por Invoice y Delivery
 ├── testsprite-plans/           # planes JSON de TestSprite por caso
 └── evidencias/                 # video, trace, screenshots, HTML report (generado)
 ```
+
+### Patrón POM: cómo se usa
+
+Los tests NO tocan selectores. Expresan intención de negocio contra Pages:
+
+```ts
+test('Caso 2: proforma oferta especial', async ({ pos }) => {
+  const { invoice, page } = pos;
+  const cargar = await invoice.abrirCargarFactura();
+  await cargar.cargarOfertaEspecial('H0867', '0914848171');
+  const pay = await invoice.continuar();
+  await pay.pagarEnEfectivo();
+});
+```
+
+El fixture `pos` (de `tests/fixtures/pos.fixture.ts`) hace automáticamente: mock de impresión → login SSO → liberar entregas de caja pendientes → abrir Facturación, y entrega las Pages ya listas (`{ page, dashboard, invoice }`).
+
+Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus selectores como campos privados y sus acciones como métodos públicos que devuelven la siguiente Page cuando corresponda.
 
 ## Casos cubiertos
 

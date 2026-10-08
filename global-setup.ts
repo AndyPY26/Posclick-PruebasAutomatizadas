@@ -1,5 +1,7 @@
 import { chromium, FullConfig } from '@playwright/test';
-import { login, liberarEntregasCajaPendientes, mockImpresion } from './tests/pos.fixtures';
+import { LoginPage } from './tests/pages/LoginPage';
+import { DashboardPage } from './tests/pages/DashboardPage';
+import { mockImpresion } from './tests/fixtures/dataset';
 
 /**
  * Deja el POS en estado ejecutable antes de la suite:
@@ -11,8 +13,10 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   const page = await browser.newPage({ baseURL } as never);
   try {
     await mockImpresion(page);
-    await login(page);
-    await liberarEntregasCajaPendientes(page);
+    const login = new LoginPage(page);
+    await login.loginSSO();
+    const dashboard = new DashboardPage(page);
+    await dashboard.liberarEntregasCajaPendientes();
     console.log('[globalSetup] Caja liberada, POS listo para la suite.');
   } finally {
     await browser.close();

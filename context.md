@@ -11,7 +11,7 @@ App: `http://localhost:4200` · FE/BE `1.12.0-rc.1` · Caja `004-112`
 5. **Las pruebas de crédito consumen cupo real** y no son repetibles sin reponerlo.
 6. **Mockear impresión** con `addInitScript` antes de navegar; sin impresora la app lanza *"Impresora no encontrada"* (ignorable).
 
-## Estructura
+## Estructura (POM)
 
 ```
 e2e/
@@ -20,10 +20,27 @@ e2e/
 ├── tsconfig.json
 ├── package.json
 ├── tests/
-│   ├── pos.fixtures.ts              # dataset + ~65 selectores + helpers
-│   └── pos-flujos-avanzados.spec.ts # 5 casos
+│   ├── pos-flujos-avanzados.spec.ts   # 5 casos (solo intención de negocio)
+│   ├── fixtures/
+│   │   ├── dataset.ts                 # pools, credenciales, utilidades puras
+│   │   └── pos.fixture.ts             # test.extend con `pos`
+│   └── pages/                         # Page Object Model
+│       ├── LoginPage.ts
+│       ├── DashboardPage.ts
+│       ├── InvoicePage.ts
+│       ├── CargarFacturaDialog.ts
+│       ├── DeliveryPage.ts
+│       ├── PaymentPage.ts             # + CreditoPyccaForm
+│       ├── SupervisorAuthDialog.ts
+│       ├── SuspendedTxDialog.ts
+│       ├── BoxDeliveryPage.ts
+│       ├── PrintHistoryPage.ts
+│       └── components/
+│           └── PersonSearchComponent.ts
 └── evidencias/            # video, trace, screenshots (generado)
 ```
+
+**Patrón:** los tests consumen Pages (`invoice.cargarCarrito(...)`), no selectores. Los selectores viven DENTRO de la clase correspondiente. Al agregar un caso nuevo: si cae en una pantalla existente, nuevo método en la Page; si cae en una pantalla nueva, nueva clase bajo `tests/pages/`.
 
 ## Comandos
 
@@ -52,17 +69,22 @@ npx playwright show-trace evidencias/test-results/**/trace.zip
 | Código vendedor | `41602` |
 | Oferta Especial | autorización `H0867` + documento `0914848171` |
 
-## Selectores clave
+## Selectores clave (ubicación en POM)
 
-```ts
-#mf_sale_product_list_table_suspended_sales_transaction          // suspender
-#mf_prod_search_product_list_table_recover_suspended_sales_transactions
-#mf_prod_search_product_list_table_find_invoice                  // lupa → "Cargar factura"
-#mf_sale_product_list_table_future_delivery                      // entrega a futuro
-#mf_person_customer_search_{document_number,find_button,clear_button}
-#admin_authorization_card_scan_input / _pass_input               // autorización
-#mf_pay_pycca_direct_credit_form_*                               // crédito PYCCA
-```
+Los selectores viven como campos privados de la Page correspondiente. Mapa rápido para saber dónde editar al cambiar el DOM:
+
+| Selector | Vive en |
+|---|---|
+| `#mf_sale_product_list_table_suspended_sales_transaction` (suspender) | `InvoicePage.ts` |
+| `#mf_prod_search_product_list_table_recover_suspended_sales_transactions` | `InvoicePage.ts` |
+| `#mf_prod_search_product_list_table_find_invoice` (lupa → *Cargar factura*) | `InvoicePage.ts` |
+| `#mf_sale_product_list_table_future_delivery` (entrega a futuro) | `InvoicePage.ts` |
+| `#mf_person_customer_search_*` (persona) | `components/PersonSearchComponent.ts` |
+| `#admin_authorization_card_scan_input` / `_pass_input` | `SupervisorAuthDialog.ts` |
+| `#mf_pay_pycca_direct_credit_form_*` (crédito PYCCA) | `PaymentPage.ts` (clase `CreditoPyccaForm`) |
+| `text=IR >> nth=0..4` (dashboard) | `DashboardPage.ts` |
+| `input[placeholder="Ej: 123456"]`, `Ej: 1234567890` (oferta especial) | `CargarFacturaDialog.ts` |
+| `#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}` | `DeliveryPage.ts` |
 
 ## Trucos no obvios
 
