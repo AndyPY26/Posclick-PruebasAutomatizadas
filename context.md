@@ -1,6 +1,9 @@
 # Context — Suite E2E POSCLICK
 
-App: `http://localhost:4200` · FE/BE `1.12.0-rc.1` · Caja `004-112`
+App: `http://localhost:4200` · FE `1.12.0-rc.5` / BE `1.12.0-rc.3` (verificado 2026-10-15) · Caja `004-112`
+
+**Acceso desde Windows:** túnel SSH a `pos4-dev` con los dos puertos (frontend + backend):
+`ssh -fN -L 4200:localhost:4200 pos4-dev` y `ssh -fN -L 3000:localhost:3000 pos4-dev`. Sin el 3000 la app queda en blanco (`/api/configuration/v1/pos` falla). Si `curl` cuelga, matar los `ssh` zombis y relanzar.
 
 ## Reglas críticas
 
@@ -85,6 +88,12 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 | `text=IR >> nth=0..4` (dashboard) | `DashboardPage.ts` |
 | `input[placeholder="Ej: 123456"]`, `Ej: 1234567890` (oferta especial) | `CargarFacturaDialog.ts` |
 | `#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}` | `DeliveryPage.ts` |
+| `#mf_product_search_product_input` (buscador SKU) | `InvoicePage.ts` |
+| `#mf_sale_button_accept` ("Continuar") / `#mf_sale_button_cancel` ("Regresar") | `InvoicePage.ts` |
+| `#valueToPay input` (el id es del wrapper `p-inputnumber`) | `PaymentPage.ts` |
+| `#button_agregar`, `[id="button_actions.continue"]` | `PaymentPage.ts` |
+| `button.p-button-success:has-text("Procesar")` (modal "Procesando Pago") | `PaymentPage.ts` |
+| `#mf_payment_methods_list_item_N` / `label[for=checkN]` (1=EFECTIVO, 5=CREDITO PYCCA) | `PaymentPage.ts` |
 
 ## Trucos no obvios
 
@@ -93,18 +102,31 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 - **Cambiar cliente:** primero `clear_button`; si hay uno asignado el campo de búsqueda no existe.
 - **Ofertas Especiales** no es módulo del dashboard: lupa → "Cargar factura" → pestaña "Oferta Especial".
 - **"Envío a"** (`/pos-ui/delivery`) = persona de retiro; usa el mismo componente que el cliente de facturación.
-- Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo.
+- Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. Desde rc.5 cada regalo es un `input[type=radio]` dentro del dialog (no `tbody tr`); "Aceptar" queda disabled hasta marcar uno.
+- **Wrappers `lib-button` / `p-button` (rc.5):** `el.click()` sobre el custom element NO dispara el ngClick. Hay que clickear el `<button>` interno (helper `clickCustom` en `InvoicePage` / `PersonSearchComponent`). Afecta: suspender, entrega futura, recuperar suspendida, lupa cargar factura, buscar cliente, Agregar, Continuar de `/pay`.
+- **Botones duplicados:** en `/invoice` y `/pay` hay un "Continuar" disabled en el header; `button:has-text("Continuar").first()` lo toma. Usar siempre los ids.
+- **Buscador de persona en `/delivery`:** coexisten dos instancias con los mismos ids (facturación oculta + "Envío a"). Filtrar con `:visible`. `#mf_person_customer_search_add_button` = **agregar cliente nuevo**, no limpiar.
+- **Suspender / Entrega futura** solo se renderizan con ≥1 producto en el carrito.
+- **Pago en efectivo (rc.5):** "Agregar" registra el pago como *Pendiente* sin modal. El modal **"Procesando Pago"** (botón verde "Procesar") aparece recién al pulsar "Continuar" del summary, uno por pago. Pendiente real = texto "Pendiente $X" del summary panel (no el badge de la tabla). Límite $2,000 por pago: con carritos mayores, el segundo "Agregar" no registra (sin resolver, ver D-07).
+- **Dashboard rc.5:** 16 módulos (nuevos: Abonos y Crédito Pycca, Cambio y devolución, Reverso de Abono). Los `nth` usados (0,3,4,8) siguen valiendo por casualidad.
+- **"Factura en curso":** si un run aborta con carrito abierto, el dashboard bloquea Apertura con ese modal. Ir a Facturación → Regresar → "Sí, eliminar".
 
 ## Estado conocido
 
+Estado tras corrida contra rc.5 (2026-10-15):
+
 | Caso | Estado |
 |---|---|
-| 1 Suspensión única | ✅ (restricción = botón `disabled`, no mensaje) |
-| 2 Oferta Especial H0867 | ✅ completo |
-| 3 Independencia clientes | ✅ + defecto D-01 |
-| 4 Autorización supervisor | ✅ hasta pantalla |
-| 5 Cuotas crédito | ❌ sin cédula con cupo |
+| 1 Suspensión única | ✅ |
+| 2 Oferta Especial | ❌ cupón `BG961` ya no carga proforma (carrito queda en $0) — pedir cupón vigente |
+| 3 Independencia clientes | ❌ "Envío a" OK; entrega falla: "No se encontraron tiendas." para todos los SKUs (D-06) |
+| 4 Autorización supervisor | ✅ |
+| 5 Cuotas crédito | ❌ "Validación de saldo – Sin Stock" → auth supervisor → backend queda en "Cargando…" >30 s |
+| 6 Venta efectivo + cliente | ❌ pago dividido >$2,000 no avanza (D-07) |
+| 7 Venta entrega futura efectivo | ⏸ no corrido; mismo bloqueo de stock que Caso 3 |
 
-**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro.
+**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · D-06 pool de SKUs sin stock de delivery en el centro 004-112 (bloquea Caso 3 y 7 hasta reponer inventario) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
+
+**Dataset ampliado (2026-10):** `SKU_POOL` crece de 32 → ~290 (familias O, D, M, L, A, Y). `CEDULA_POOL` crece de 24 → 33 incluyendo lote CLUB PYCCA - CREDITO con cédulas reales de clientes con tarjeta de crédito activa.
 
 **No verificable aquí:** contenido de documentos impresos (sin impresora ni preview).
