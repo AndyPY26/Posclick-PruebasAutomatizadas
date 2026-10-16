@@ -26,7 +26,7 @@ e2e/
 ├── tsconfig.json
 ├── package.json
 ├── tests/
-│   ├── pos-flujos-avanzados.spec.ts   # 5 casos (solo intención de negocio)
+│   ├── pos-flujos-avanzados.spec.ts   # 7 casos (solo intención de negocio)
 │   ├── fixtures/
 │   │   ├── dataset.ts                 # pools, credenciales, utilidades puras
 │   │   └── pos.fixture.ts             # test.extend con `pos`
@@ -58,8 +58,10 @@ npx playwright install chromium
 npx tsc --noEmit                    # sin salida = OK
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4200/login   # → 200
 
-npm test                            # los 5 casos
-npm run test:caso2                  # uno (caso1…caso5)
+npm test                            # los 7 casos (modo serial: se detiene en el primer fallo)
+npm run test:caso2                  # uno (caso1…caso7)
+# Suite completa sin cortar en el primer fallo (uno por uno):
+for c in 1 2 3 4 5 6 7; do npx playwright test -g "Caso $c:"; done
 npm run test:headed
 npm run report                      # HTML + videos + traces
 npx playwright show-trace evidencias/test-results/**/trace.zip
@@ -73,7 +75,8 @@ npx playwright show-trace evidencias/test-results/**/trace.zip
 | Supervisor (trama lector) | `%21310300;432940;JAIME GABRIEL HURTADO ALVAREZ` + Enter |
 | Clave supervisor | `1979` |
 | Código vendedor | `41602` |
-| Oferta Especial | autorización `H0867` + documento `0914848171` |
+| Oferta Especial | `CREDENCIALES.ofertaEspecial` = `BG961` + `1709231169`. **Vencido en 004-150** (404). El anterior `H0867` + `0914848171` también da 404 |
+| Crédito con cupo (verificado 2026-10-16) | `1200573622` (cupo $3,400) y `0916633472` (cupo $2,521.58) |
 
 ## Selectores clave (ubicación en POM)
 
@@ -97,14 +100,24 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 | `#button_agregar`, `[id="button_actions.continue"]` | `PaymentPage.ts` |
 | `button.p-button-success:has-text("Procesar")` (modal "Procesando Pago") | `PaymentPage.ts` |
 | `#mf_payment_methods_list_item_N` / `label[for=checkN]` (1=EFECTIVO, 5=CREDITO PYCCA) | `PaymentPage.ts` |
+| `input#receivedAmount`, `input#paymentAmount`, `[id="button_actions.accept"]` (registro de efectivo) | `PaymentPage.ts` |
+| `#mf_pay_recorded_payments_table_row_0_amount` (monto del pago registrado) | `PaymentPage.ts` (`CreditoPyccaForm`) |
+| `table:has-text("Tienda Destino")` (tiendas con inventario) + `.p-inputnumber-increment-button` | `DeliveryPage.ts` |
+| `#mf_sale_invoice_finder_invoice_document_type_select` (toggle Post Venta / Oferta Especial), `[id="button_invoice-finder.find-button"]` | `CargarFacturaDialog.ts` |
 
 ## Trucos no obvios
 
 - **Swipe de supervisor:** escribir en el input *oculto* (el visible es `readonly`), con prefijo `%` y `\n` final, luego Enter. Sin el `%` → *"Formulario incompleto: cardNumber, frameData"*.
-- **Dropdowns PrimeNG:** click en trigger → `ArrowDown` → `Enter`, **sin interrupciones** (un screenshot intermedio cierra el overlay).
+- **Dropdowns PrimeNG:** click en trigger → `ArrowDown` → `Enter`, **sin interrupciones** (un screenshot intermedio cierra el overlay). En `/pay` (1.13.0) el layout del panel derecho **intercepta el click** de los `p-select` de Crédito PYCCA: abrir con foco en `[role=combobox]` + Enter y elegir la opción con click DOM.
+- **Contadores `p-inputnumber` (1.13.0):** `fill()` cambia el texto pero NO el model de Angular. Usar el botón `.p-inputnumber-increment-button` + Tab, o `pressSequentially`. Afecta entrega futura (Entrega y Cantidad por tienda), Recibido del registro de efectivo y Valor a pagar de crédito.
 - **Cambiar cliente:** primero `clear_button`; si hay uno asignado el campo de búsqueda no existe.
 - **Ofertas Especiales** no es módulo del dashboard: lupa → "Cargar factura" → pestaña "Oferta Especial".
 - **"Envío a"** (`/pos-ui/delivery`) = persona de retiro; usa el mismo componente que el cliente de facturación.
+- **Entrega futura (1.13.0):** (1) en el panel izquierdo subir "Entrega" del SKU con **+** y Tab → `POST /api/product/v1/check-inventory`; (2) la tabla "Productos disponibles" (Tienda · Ciudad · Inventario · Cantidad · Tienda Destino) lista tiendas con stock: subir "Cantidad" de una con **+** y Tab; (3) "Movimiento de unidades → Total Unidades" sube (la etiqueta y el número son nodos hermanos). Sin stock, la tabla dice "No se encontraron tiendas.".
+- **Crédito PYCCA (1.13.0):** cédula + Tab → elegir tarjeta → foco en "Valor a pagar" + Tab (→ `POST /api/payment/v1/installments-plan` habilita Financiamiento) → elegir plan ("DIF. CON INTERESES - (N CUOTAS) $X" o "N CUOTAS-PAGA EN ENERO $X") → Agregar. Tras Agregar pueden salir "Actualización de datos clientes club Pycca" (`#areaCasa`, `#telefonoCasa`, `#celular`, `#mail1`; se **cancela** para no tocar datos reales, el pago se registra igual) y "Captaciones de seguros" (Seguro de Desgravamen $2.99, Cerrar).
+- **Cargar factura → Oferta Especial:** es un toggle (`p-togglebutton`); "Post Venta" viene activo por defecto y un segundo click desactiva la opción elegida. Campos: "Número de autorización" (`Ej: 123456`) y "Número de documento" (`Ej: 1234567890`). Consulta `GET /api/offers/v1/special-offer?accessToken=…&customerId=…`; si no existe: aviso "Advertencia – No se encontraron datos.".
+- **Reimpresión (D-01, 1.13.0):** "No hay documentos para imprimir" es un aviso **efímero** (pocos segundos tras la autorización); `PrintHistoryPage` lo escucha mientras autoriza (`sinDocumentosVisto`).
+- **No correr dos suites a la vez en el servidor:** `npm run test:casoN` ejecuta `clean`, que borra `evidencias/test-results` y rompe los traces de la otra corrida (`ENOENT … .trace`); además comparten caja.
 - Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. Desde rc.5 cada regalo es un `input[type=radio]` dentro del dialog (no `tbody tr`); "Aceptar" queda disabled hasta marcar uno.
 - **Wrappers `lib-button` / `p-button` (rc.5):** `el.click()` sobre el custom element NO dispara el ngClick. Hay que clickear el `<button>` interno (helper `clickCustom` en `InvoicePage` / `PersonSearchComponent`). Afecta: suspender, entrega futura, recuperar suspendida, lupa cargar factura, buscar cliente, Agregar, Continuar de `/pay`.
 - **Botones duplicados:** en `/invoice` y `/pay` hay un "Continuar" disabled en el header; `button:has-text("Continuar").first()` lo toma. Usar siempre los ids.
@@ -135,19 +148,19 @@ En `/pos-ui/invoice` el resumen sí tiene ids: `#mf_sale_discount_value`, `#mf_s
 
 ## Estado conocido
 
-Estado (corridas 2026-10-15 en rc.5 y 2026-10-16 en 1.13.0):
+Estado final 2026-10-16 · FE 1.13.0 · caja 004-150 (cada caso corrido por separado en `pos4-dev`):
 
-| Caso | Estado |
-|---|---|
-| 1 Suspensión única | ✅ |
-| 2 Oferta Especial | ❌ cupón `BG961` ya no carga proforma (carrito queda en $0) — pedir cupón vigente |
-| 3 Independencia clientes | ❌ "Envío a" OK; entrega falla: "No se encontraron tiendas." para todos los SKUs (D-06) |
-| 4 Autorización supervisor | ✅ |
-| 5 Cuotas crédito | ❌ "Validación de saldo – Sin Stock" → auth supervisor → backend queda en "Cargando…" >30 s |
-| 6 Venta efectivo + cliente | ✅ 2026-10-16 en 1.13.0 (1 passed, 4.0 min). Workaround D-07: carrito acotado a $1,000–$1,500 con `cargarCarritoConTope`. Maneja regalo (+$2.99), descuentos de cliente y registro de efectivo |
-| 7 Venta entrega futura efectivo | ⏸ no corrido; mismo bloqueo de stock que Caso 3 |
+| Caso | Estado | Notas |
+|---|---|---|
+| 1 Suspensión única | ✅ | `SuspendedTxDialog` espera que cargue la tabla (antes contaba 0 radios) y su `modal` quedó acotado al `.p-dialog` |
+| 2 Oferta Especial | ❌ **datos** | `GET /api/offers/v1/special-offer` → 404 para `BG961`/`1709231169` y para `H0867`/`0914848171` ("Advertencia – No se encontraron datos."). UI y selectores OK |
+| 3 Independencia clientes | ✅ | Entrega futura con flujo +/Tab; carrito acotado (D-07); D-01 capturado como aviso efímero |
+| 4 Autorización supervisor | ✅ | — |
+| 5 Cuotas crédito | ✅ | `CreditoPyccaForm` reescrito (p-select por teclado, blur de "Valor a pagar", modales de datos de cliente y seguros); carrito de $500–$1,000 |
+| 6 Venta efectivo + cliente | ✅ | Carrito $1,000–$1,500 (D-07); regalo +$2.99; sobrepago por descuento de colaborador (10% EFECTIVO) → borra y repaga (implementado, aún no ejercitado en corrida) |
+| 7 Venta entrega futura efectivo | ✅ | Mismo flujo de entrega que el Caso 3 |
 
-**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · D-06 pool de SKUs sin stock de delivery en el centro 004-112 (re-verificar en 004-150) (bloquea Caso 3 y 7 hasta reponer inventario) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
+**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*, aviso efímero en 1.13.0; el backend responde 200 a `/receipt/v1/reprint` y `/generatereceipts`) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · ~~D-06~~ **falso positivo** (2026-10-16): el POM llenaba los contadores con `fill()` y nunca consultaba inventario; en 004-150 sí hay stock de entrega (p.ej. M03493 en 21 tiendas, O22652 en 16) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
 
 **Dataset ampliado (2026-10):** `SKU_POOL` crece de 32 → ~290 (familias O, D, M, L, A, Y). `CEDULA_POOL` crece de 24 → 33 incluyendo lote CLUB PYCCA - CREDITO con cédulas reales de clientes con tarjeta de crédito activa.
 

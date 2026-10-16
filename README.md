@@ -110,27 +110,27 @@ Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus 
 
 ## Casos cubiertos
 
-Estado al 2026-10-16 (detalle en `context.md`):
+Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`): **6 de 7 en verde**.
 
 | # | Caso | Estado |
 |---|---|---|
 | 1 | Suspensión única | ✅ |
-| 2 | Oferta Especial | ❌ datos: el cupón de `CREDENCIALES.ofertaEspecial` ya no carga la proforma |
-| 3 | Independencia clientes | ❌ datos: sin stock de entrega futura (D-06) |
+| 2 | Oferta Especial | ❌ **datos**: la oferta de `CREDENCIALES.ofertaEspecial` no existe en el backend (404) |
+| 3 | Independencia clientes | ✅ (+ defecto D-01) |
 | 4 | Autorización supervisor | ✅ hasta pantalla |
-| 5 | Cuotas crédito | ❌ datos/backend: sin stock + backend en "Cargando…" |
+| 5 | Cuotas crédito | ✅ |
 | 6 | Venta efectivo + cliente | ✅ con carrito acotado a $1,000–$1,500 (workaround D-07) |
-| 7 | Entrega futura + efectivo | ⏸ bloqueado por stock (D-06) |
+| 7 | Entrega futura + efectivo | ✅ con carrito acotado (workaround D-07) |
 
 ### Defectos conocidos
 
-- **D-01** Voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*).
+- **D-01** Voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*; en 1.13.0 es un aviso efímero).
 - **D-02** Suspensión sin feedback visible al usuario.
-- **D-03** Créditos de prueba bloqueados / sobregirados.
+- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 sí hay cédulas con cupo: `1200573622`, `0916633472`, `2450681438`).
 - **D-04** Autorización repetitiva.
 - **D-05** Código de oferta no visible en cobro.
-- **D-06** SKUs del pool sin stock de entrega futura.
-- **D-07** Con carrito > $2,000 en efectivo, solo se registra el primer pago de $2,000.
+- ~~**D-06**~~ Falso positivo: no era falta de stock sino `fill()` sobre contadores `p-inputnumber`.
+- **D-07** Con carrito > $2,000 en efectivo, solo se registra el primer pago de $2,000 (los Casos 3, 6 y 7 acotan el carrito a $1,000–$1,500).
 
 **No verificable desde la suite:** contenido de documentos impresos (sin impresora ni preview).
 
@@ -143,7 +143,10 @@ Estado al 2026-10-16 (detalle en `context.md`):
 - **"Envío a"** (`/pos-ui/delivery`) = persona de retiro; usa el mismo componente que el cliente de facturación.
 - Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. En 1.13.0 el regalo suma su precio al total y hay que pagar la diferencia.
 - **Botones `lib-button` / `p-button`:** el click debe ir al `<button>` interno; sobre el wrapper no dispara la acción.
-- **Servidor remoto:** `pos4-dev` no es un repo git; los cambios locales llegan con `.\sync.ps1`.
+- **Contadores `p-inputnumber`:** `fill()` no actualiza el valor de Angular; usar el botón **+** y Tab, o teclear (`pressSequentially`).
+- **Modales nuevos de 1.13.0:** "Descuentos disponibles para el cliente", "Registro de pago en efectivo", "Actualización de datos clientes club Pycca" (se cancela), "Captaciones de seguros" (Cerrar), "Cierre de Cajón Monedero". Detalle y selectores en `context.md`.
+- **Servidor remoto:** `pos4-dev` no es un repo git; los cambios locales llegan con `.\sync.ps1`. No correr dos suites a la vez: `npm run test:casoN` borra `evidencias/test-results` y comparten caja.
+- **Suite completa:** el spec usa modo `serial` y se detiene en el primer fallo; para ver los 7 casos: `for c in 1 2 3 4 5 6 7; do npx playwright test -g "Caso $c:"; done`.
 
 ## `context.md` como base de conocimiento (RAG)
 

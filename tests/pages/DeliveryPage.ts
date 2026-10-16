@@ -13,7 +13,6 @@ export class DeliveryPage {
 
   readonly envioA = this.page.locator('text=Envío a').locator('..');
   readonly tituloEntregaFutura = this.page.locator('text=Entrega futura');
-  private readonly buscarTienda = this.page.locator('input[placeholder="Buscar tienda"]');
   private readonly abrirCalendario = this.page.locator('button[aria-label="Elige fecha"]');
   private readonly diaHabilitado = this.page.locator('span.p-datepicker-day:not(.p-disabled)');
   private readonly telefono = this.page.locator('input[placeholder="09xxxxxxxx"]');
@@ -25,12 +24,6 @@ export class DeliveryPage {
     await this.page.waitForURL(/pos-ui\/delivery/, { timeout: 60_000 });
   }
 
-  cantidadProductoLocator(sku: string): Locator {
-    return this.page.locator(
-      `input#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}`,
-    );
-  }
-
   async setTelefono(numero: string): Promise<void> {
     await this.telefono.fill(numero);
   }
@@ -39,24 +32,114 @@ export class DeliveryPage {
     await expect(this.envioA).toContainText(texto);
   }
 
+  /** Lee el total "Movimiento de unidades" del panel derecho. */
+  private async totalUnidades(): Promise<number> {
+    // La etiqueta "Total Unidades:" y el número son nodos hermanos: se sube
+    // desde el título del panel hasta un contenedor que tenga ambos.
+    return this.page
+      .evaluate(() => {
+        let el: HTMLElement | null = Array.from(document.querySelectorAll('h2')).find((h) =>
+          /Movimiento de unidades/.test(h.textContent || ''),
+        ) as HTMLElement | null;
+        for (let i = 0; i < 6 && el; i++) {
+          const m = /Total Unidades:\s*(\d+)/.exec((el.innerText || '').replace(/\s+/g, ' '));
+          if (m) return Number(m[1]);
+          el = el.parentElement;
+        }
+        return 0;
+      })
+      .catch(() => 0);
+  }
+
+  /** Tabla central de tiendas con inventario ("Productos disponibles"). */
+  private readonly tablaTiendas = this.page.locator('table:has-text("Tienda Destino")');
+
   /**
-   * Configura la entrega mínima (producto por tienda + fecha + teléfono) para
-   * los items del carrito. Permite volver al flujo de facturación.
+   * Sube en 1 un `p-inputnumber` con su botón "+" y confirma con Tab.
+   * `fill()` NO sirve en estos contadores: cambia el texto pero no el model de
+   * Angular, así que nunca se dispara `POST /api/product/v1/check-inventory`
+   * ni se suma a "Movimiento de unidades". Esa era la causa del falso D-06.
+   */
+  private async incrementar(contenedor: Locator): Promise<void> {
+    await contenedor.locator('.p-inputnumber-increment-button').first().click();
+    await this.page.keyboard.press('Tab');
+  }
+
+  /**
+   * Configura la entrega mínima: deja 1 unidad del primer SKU del carrito que
+   * tenga inventario en alguna tienda, más fecha y teléfono.
+   *
+   * Flujo FE 1.13.0 (verificado 2026-10-16 en 004-150):
+   *  1. Panel izquierdo: subir "Entrega" del SKU con "+" → check-inventory.
+   *  2. Tabla "Productos disponibles": Tienda · Ciudad · Inventario · Cantidad ·
+   *     Tienda Destino. Subir "Cantidad" de la primera tienda con "+".
+   *  3. "Movimiento de unidades → Total Unidades" debe subir.
+   * Si un SKU no tiene tiendas ("No se encontraron tiendas."), se vuelve su
+   * Entrega a 0 y se prueba el siguiente.
    */
   async configurarEntregaMinima(carrito: ItemCarrito[]): Promise<void> {
-    for (const { sku, cantidad } of carrito) {
-      await this.page.locator(`text=${sku}`).first().click().catch(() => undefined);
-      await this.page.waitForTimeout(1_200);
-      await this.cantidadProductoLocator(sku)
-        .fill(String(cantidad))
-        .catch(() => undefined);
-      await this.buscarTienda.fill('');
+    const sinStock: string[] = [];
+    let configurado: string | null = null;
+
+    for (const { sku } of carrito) {
+      const entrega = this.page.locator(
+        `p-inputnumber#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}, ` +
+          `#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}:not(input)`,
+      ).first();
+      if (!(await entrega.isVisible().catch(() => false))) {
+        console.log(`[DeliveryPage] SKU=${sku} no está en el panel de entrega → skip`);
+        continue;
+      }
+      const totalAntes = await this.totalUnidades();
+
+      const inventario = this.page
+        .waitForResponse((r) => /\/product\/v1\/check-inventory/.test(r.url()), { timeout: 15_000 })
+        .catch(() => null);
+      await this.incrementar(entrega);
+      await inventario;
       await this.page.waitForTimeout(1_500);
-      const tienda = this.page.locator('tbody tr input[role=spinbutton]').first();
-      await tienda.fill(String(cantidad));
-      await tienda.press('Tab');
+
+      const primeraFila = this.tablaTiendas.locator('tbody tr').first();
+      const sinTiendas = /No se encontraron tiendas/i.test(
+        (await primeraFila.innerText().catch(() => '')) || '',
+      );
+      if (sinTiendas) {
+        console.log(`[DeliveryPage] ⚠️  SKU=${sku} sin tiendas con inventario → skip`);
+        sinStock.push(sku);
+        await entrega.locator('.p-inputnumber-decrement-button').first().click().catch(() => undefined);
+        await this.page.keyboard.press('Tab');
+        await this.page.waitForTimeout(1_000);
+        continue;
+      }
+
+      const tienda = (await primeraFila.innerText()).split('\n')[0]?.trim();
+      await this.incrementar(primeraFila);
       await this.page.waitForTimeout(1_500);
+      const totalDespues = await this.totalUnidades();
+      if (totalDespues > totalAntes) {
+        console.log(
+          `[DeliveryPage] ✅ SKU=${sku} → 1 u. desde "${tienda}" (total ${totalAntes}→${totalDespues})`,
+        );
+        configurado = sku;
+        break;
+      }
+      console.log(`[DeliveryPage] ⚠️  SKU=${sku}: Total Unidades no subió (${totalAntes}) → skip`);
+      sinStock.push(sku);
     }
+
+    console.log(
+      `[DeliveryPage] Resumen: configurado=${configurado ?? '-'} sinStock=${sinStock.length} ` +
+        `total=${await this.totalUnidades()}`,
+    );
+    if (!configurado) {
+      throw new Error(
+        'Ningún SKU del carrito tiene inventario para entrega futura. SKUs probados: ' +
+          carrito.map((c) => c.sku).join(', ') +
+          ' | Sin tiendas: ' +
+          sinStock.join(', '),
+      );
+    }
+
     await this.abrirCalendario.click();
     await this.page.waitForTimeout(1_200);
     await this.diaHabilitado.last().click();

@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { seleccionarEnDropdown, montoDe } from '../fixtures/dataset';
+import { montoDe } from '../fixtures/dataset';
 
 /**
  * Pantalla de cobro (/pos-ui/pay).
@@ -84,13 +84,30 @@ export class PaymentPage {
         const i = h2.indexOf(label);
         return i >= 0 ? num(h2[i + 1]) : 0;
       };
-      return {
-        total: valor('Valor total'),
-        registrado: valor('Valor registrado'),
-        descuento: valor('Descuento'),
-        pendiente: num(panel?.querySelector('h1')?.textContent),
-      };
+      const total = valor('Valor total');
+      const registrado = valor('Valor registrado');
+      // El <h1> muestra el valor absoluto: si ya se registró de más (p.ej. el
+      // descuento de colaborador por EFECTIVO bajó el total después de Agregar)
+      // el pendiente real es negativo (sobrepago).
+      const absPendiente = num(panel?.querySelector('h1')?.textContent);
+      const pendiente = registrado > total + 0.005 ? -absPendiente : absPendiente;
+      return { total, registrado, descuento: valor('Descuento'), pendiente };
     });
+  }
+
+  /** Borra todos los pagos de la tabla "Pagos registrados" (tacho de cada fila). */
+  private async eliminarPagosRegistrados(): Promise<void> {
+    for (let i = 0; i < 5; i++) {
+      const borrado = await this.page.evaluate(() => {
+        const fila = document.querySelector('#mf_pay_recorded_payments_table_row_0_actions');
+        const botones = Array.from(fila?.querySelectorAll('button') ?? []) as HTMLButtonElement[];
+        const tacho = botones[botones.length - 1];
+        tacho?.click();
+        return !!tacho;
+      });
+      if (!borrado) return;
+      await this.page.waitForTimeout(2_000);
+    }
   }
 
   /** Selecciona EFECTIVO si no está marcado (el regalo lo deselecciona). */
@@ -139,13 +156,24 @@ export class PaymentPage {
   private async registrarEfectivoHastaCubrir(): Promise<void> {
     const LIMITE_EFECTIVO = 2000;
     for (let i = 0; i < 15; i++) {
-      const r = await this.leerResumen();
+      let r = await this.leerResumen();
       console.log(
         `[pagarEnEfectivo] iter=${i} total=$${r.total} registrado=$${r.registrado} pendiente=$${r.pendiente}`,
       );
       if (r.pendiente === 0) return;
+      if (r.pendiente < 0) {
+        // Clientes colaboradores tienen 10% de descuento pagando en EFECTIVO: el
+        // total baja después de registrar el pago y queda sobrepago. Se borra el
+        // pago y se vuelve a pagar el total ya descontado.
+        console.log(`[pagarEnEfectivo] sobrepago de $${-r.pendiente} → borrar pagos y repagar`);
+        await this.eliminarPagosRegistrados();
+        continue;
+      }
 
       await this.seleccionarEfectivo();
+      // Elegir EFECTIVO puede aplicar el descuento por forma de pago: releer.
+      r = await this.leerResumen();
+      if (r.pendiente <= 0) continue;
       const monto = Math.min(r.pendiente, LIMITE_EFECTIVO);
       // focus + select + fill + Tab sincroniza el model de p-inputnumber.
       await this.inputPrincipal
@@ -235,16 +263,30 @@ export class PaymentPage {
   }
 
   async seleccionarCreditoPycca(): Promise<CreditoPyccaForm> {
-    await this.creditoPycca.first().click();
+    await this.page
+      .locator('label[for=check5]')
+      .evaluate((el: HTMLElement) => el.click())
+      .catch(() => this.creditoPycca.first().click());
     await this.page.waitForTimeout(2_000);
     return this.credito;
   }
 }
 
 /**
- * Formulario Crédito PYCCA (sub-componente de PaymentPage).
+ * Formulario Crédito PYCCA (sub-componente de PaymentPage), FE 1.13.0.
  *
- * Una tarjeta bloqueada se marca con `p-disabled` + icono `pi-lock`.
+ * Los ids no cambiaron, pero:
+ *  - Los `p-select` (tarjeta, financiamiento) tienen `appendTo="body"` y el
+ *    layout del panel derecho intercepta el click de mouse: se abren con foco
+ *    en su `[role=combobox]` + Enter, y la opción se elige con click DOM.
+ *  - El financiamiento se habilita recién cuando "Valor a pagar" pierde el foco
+ *    (Tab) → `POST /api/payment/v1/installments-plan`.
+ *  - Opciones de financiamiento: "N CUOTAS-PAGA EN ENERO $X" y
+ *    "DIF. CON INTERESES - (N CUOTAS) $X" (48 opciones para $749).
+ *  - "Agregar" abre "Actualización de datos clientes club Pycca" (se cancela
+ *    para no modificar datos reales del cliente; el pago se registra igual) y
+ *    luego "Captaciones de seguros" (Cerrar).
+ * Una tarjeta bloqueada se marca con `p-disabled` / `aria-disabled`.
  */
 export class CreditoPyccaForm {
   constructor(private readonly page: Page) {}
@@ -265,10 +307,12 @@ export class CreditoPyccaForm {
   );
   readonly cuotaInput = this.page.locator('#mf_pay_pycca_direct_credit_form_fee_value_input');
   readonly agregarBtn = this.page.locator('#mf_pay_pycca_direct_credit_form_add_button');
-  readonly opcionTarjeta = this.page.locator('li[role=option]');
+  readonly opcionTarjeta = this.page.locator('[role=option]');
   readonly pagoRegistradoRow = this.page
     .locator('#mf_pay_recorded_payments_table_row_0_actions')
     .locator('..');
+  /** Monto del primer pago registrado (la fila completa incluye el nº de tarjeta). */
+  readonly pagoRegistradoMonto = this.page.locator('#mf_pay_recorded_payments_table_row_0_amount');
 
   async setCedula(cedula: string): Promise<void> {
     await this.cedulaInput.fill(cedula);
@@ -276,127 +320,39 @@ export class CreditoPyccaForm {
     await this.page.waitForTimeout(2_500);
   }
 
-  async seleccionarTarjeta(posicion = 1): Promise<void> {
-    await seleccionarEnDropdown(this.page, this.tarjetaSelect, posicion);
-  }
-
-  private estadoCreditForm() {
-    return this.page.evaluate(() => {
-      const val = (id: string) => {
-        const el = document.querySelector(`#${id}`);
-        if (!el) return '';
-        // El id puede estar en el <input> directamente o en un wrapper.
-        const input = el.tagName === 'INPUT' ? (el as HTMLInputElement) : el.querySelector('input');
-        return (input as HTMLInputElement | null)?.value || '';
-      };
-      const financing = document.querySelector('#mf_pay_pycca_direct_credit_form_financing_select');
-      return {
-        financingDisabled: !!financing?.classList.contains('p-disabled'),
-        disponible: val('mf_pay_pycca_direct_credit_form_credit_available_input'),
-        valorAPagar: val('mf_pay_pycca_direct_credit_form_value_to_pay_input'),
-      };
-    });
-  }
-
-  /**
-   * Habilita el select de financiamiento ajustando valorAPagar al cupo
-   * disponible (necesario por bug D-03: tarjetas con cupo insuficiente).
-   */
-  private async habilitarFinancing(): Promise<void> {
-    const num = (s: string) => Number(s.replace(/[^0-9.]/g, '')) || 0;
-    // Esperar a que el formulario termine de cargar disponible + valorAPagar.
-    for (let i = 0; i < 10; i++) {
-      const s = await this.estadoCreditForm();
-      if (!s.financingDisabled) return;
-      if (num(s.disponible) > 0 && num(s.valorAPagar) > 0) break;
-      await this.page.waitForTimeout(1_000);
-    }
-    const estado = await this.estadoCreditForm();
-    const disp = num(estado.disponible);
-    const vap = num(estado.valorAPagar);
-    console.log(
-      `[CreditoPycca] estado pre-ajuste: disponible=${disp} valorAPagar=${vap} ` +
-        `financingDisabled=${estado.financingDisabled}`,
-    );
-    if (estado.financingDisabled && disp > 0) {
-      const monto = Math.min(vap || disp, disp);
-      console.log(`[CreditoPycca] ajustando valorAPagar a ${monto.toFixed(2)}`);
-      await this.valorAPagarInput.click({ force: true }).catch(() => undefined);
-      await this.valorAPagarInput.press('Control+A').catch(() => undefined);
-      await this.valorAPagarInput.fill(monto.toFixed(2));
-      await this.valorAPagarInput.press('Tab');
-      await this.page.waitForTimeout(2_500);
-      const nuevo = await this.estadoCreditForm();
-      console.log(
-        `[CreditoPycca] estado post-ajuste: valorAPagar=${nuevo.valorAPagar} ` +
-          `financingDisabled=${nuevo.financingDisabled}`,
-      );
-    }
-  }
-
-  async seleccionarFinanciamiento(posicion = 1): Promise<void> {
-    await this.habilitarFinancing();
-    const estado = await this.estadoCreditForm();
-    if (estado.financingDisabled) {
-      throw new Error(
-        'El select de financiamiento no se habilitó (sigue p-disabled). ' +
-          `disponible="${estado.disponible}" valorAPagar="${estado.valorAPagar}". ` +
-          'Causa típica: la cédula de prueba no tiene cupo real asignado en el ' +
-          'POS (bug D-03). Solicita a infraestructura reponer cupo de alguna ' +
-          'cédula del CEDULA_POOL en el centro 004-112.',
-      );
-    }
-
-    // Abrir el dropdown — PrimeNG p-select requiere click en el elemento
-    // interno (.p-select-label o .p-select o similar), no en el wrapper.
-    const abierto = await this.page.evaluate(() => {
-      const root = document.querySelector('#mf_pay_pycca_direct_credit_form_financing_select');
-      if (!root) return false;
-      // Buscar el elemento clickable interno (varias clases posibles en PrimeNG v17/v18).
-      const trigger =
-        root.querySelector('.p-select-label') ||
-        root.querySelector('.p-dropdown-label') ||
-        root.querySelector('[data-pc-section="label"]') ||
-        root.querySelector('[role="combobox"]') ||
-        (root as HTMLElement);
-      (trigger as HTMLElement).click();
-      return true;
-    });
-    console.log(`[CreditoPycca.seleccionarFinanciamiento] dropdown abierto=${abierto}`);
-    await this.page.waitForTimeout(2_500);
-    // Scrape de opciones visibles del overlay — PrimeNG puede appendTo=body.
-    const opciones = await this.page.$$eval(
-      '.p-select-overlay li, .p-dropdown-items li, [role=option], .p-select-list-item, .p-dropdown-item',
-      (els) =>
-        (els as HTMLElement[])
-          .filter((e) => e.offsetParent !== null)
-          .map((e) => (e.innerText || '').trim())
-          .filter(Boolean),
-    );
-    console.log(`[CreditoPycca.seleccionarFinanciamiento] opciones:`, JSON.stringify(opciones));
-    // Priorizar opciones con "cuotas" > 1 (ej: "DIF. CON INTERESES - 3 CUOTAS").
-    const idx = opciones.findIndex((o) => {
-      const m = /\(\s*(\d+)\s*CUOTAS?\)/i.exec(o);
-      return m && Number(m[1]) > 1;
-    });
-    const posicionFinal = idx >= 0 ? idx + 1 : posicion;
-    const elegida = opciones[posicionFinal - 1] ?? '?';
-    console.log(`[CreditoPycca.seleccionarFinanciamiento] eligiendo posición ${posicionFinal} (${elegida})`);
-    // Navegar con teclado desde el estado abierto (el overlay está activo).
-    for (let i = 0; i < posicionFinal; i++) await this.page.keyboard.press('ArrowDown');
+  /** Abre un p-select con teclado (el click de mouse lo intercepta el layout). */
+  private async abrirSelect(selector: string): Promise<void> {
+    await this.page.locator(`${selector} [role=combobox]`).focus();
     await this.page.keyboard.press('Enter');
+    await this.page.waitForTimeout(1_500);
+  }
+
+  private async opcionesVisibles(): Promise<string[]> {
+    return this.page.$$eval('[role=option]', (els) =>
+      (els as HTMLElement[]).map((e) => (e.textContent || '').replace(/\s+/g, ' ').trim()),
+    );
+  }
+
+  private async clickOpcion(indice: number): Promise<void> {
+    await this.opcionTarjeta.nth(indice).evaluate((el: HTMLElement) => el.click());
     await this.page.waitForTimeout(2_500);
   }
 
   async abrirTarjetaDropdown(): Promise<void> {
-    await this.page.locator(this.tarjetaSelect).click();
-    await this.page.waitForTimeout(1_800);
+    await this.abrirSelect(this.tarjetaSelect);
   }
 
-  /** Cierra el overlay haciendo click en el input de cédula. */
+  /** Cierra el overlay abierto sin seleccionar. */
   async cerrarOverlay(): Promise<void> {
-    await this.cedulaInput.click();
+    await this.page.keyboard.press('Escape');
     await this.page.waitForTimeout(600);
+  }
+
+  async seleccionarTarjeta(posicion = 1): Promise<void> {
+    if (!(await this.opcionTarjeta.first().isVisible().catch(() => false))) {
+      await this.abrirTarjetaDropdown();
+    }
+    await this.clickOpcion(posicion - 1);
   }
 
   /** True si la primera tarjeta del dropdown abierto está bloqueada. */
@@ -404,25 +360,113 @@ export class CreditoPyccaForm {
     const opcion = this.opcionTarjeta.first();
     const hayTarjeta = await opcion.isVisible().catch(() => false);
     const bloqueada = hayTarjeta
-      ? await opcion.evaluate((el) => el.classList.contains('p-disabled')).catch(() => true)
+      ? await opcion
+          .evaluate(
+            (el) => el.classList.contains('p-disabled') || el.getAttribute('aria-disabled') === 'true',
+          )
+          .catch(() => true)
       : true;
     return { hayTarjeta, bloqueada };
   }
 
+  private async financiamientoDeshabilitado(): Promise<boolean> {
+    return this.financiamientoLocator
+      .evaluate((el) => el.classList.contains('p-disabled'))
+      .catch(() => true);
+  }
+
+  /**
+   * Ajusta "Valor a pagar" al cupo si hace falta y confirma con Tab: es el blur
+   * de ese campo lo que pide el plan de cuotas y habilita el financiamiento.
+   */
+  private async habilitarFinancing(): Promise<void> {
+    const num = (s: string) => Number(s.replace(/[^0-9.]/g, '')) || 0;
+    const disponible = num(await this.disponibleInput.inputValue().catch(() => ''));
+    const valor = num(await this.valorAPagarInput.inputValue().catch(() => ''));
+    console.log(`[CreditoPycca] disponible=${disponible} valorAPagar=${valor}`);
+
+    await this.valorAPagarInput.focus();
+    if (disponible > 0 && valor > disponible) {
+      console.log(`[CreditoPycca] ajustando valorAPagar a ${disponible.toFixed(2)}`);
+      await this.valorAPagarInput.evaluate((el: HTMLInputElement) => el.select());
+      // p-inputnumber: hay que teclear, `fill` no sincroniza el model.
+      await this.valorAPagarInput.pressSequentially(disponible.toFixed(2));
+    }
+    const plan = this.page
+      .waitForResponse((r) => /\/payment\/v1\/installments-plan/.test(r.url()), { timeout: 15_000 })
+      .catch(() => null);
+    await this.page.keyboard.press('Tab');
+    await plan;
+    await this.page.waitForTimeout(1_500);
+  }
+
+  /**
+   * Elige un plan "DIF. CON INTERESES - (N CUOTAS)" con N = `cuotas` si existe;
+   * si no, el primer plan con más de 1 cuota.
+   */
+  async seleccionarFinanciamiento(cuotas = 3): Promise<void> {
+    await this.habilitarFinancing();
+    if (await this.financiamientoDeshabilitado()) {
+      throw new Error(
+        'El select de financiamiento no se habilitó (sigue p-disabled). Causa típica: ' +
+          'la cédula no tiene cupo real (D-03) o installments-plan no respondió.',
+      );
+    }
+    await this.abrirSelect(this.financiamientoSelect);
+    const opciones = await this.opcionesVisibles();
+    const plazo = (o: string) => Number(/\(\s*(\d+)\s*CUOTAS?\)/i.exec(o)?.[1] ?? 0);
+    let idx = opciones.findIndex((o) => plazo(o) === cuotas);
+    if (idx < 0) idx = opciones.findIndex((o) => plazo(o) > 1);
+    if (idx < 0) idx = 0;
+    console.log(
+      `[CreditoPycca.seleccionarFinanciamiento] ${opciones.length} opciones → "${opciones[idx] ?? '?'}"`,
+    );
+    await this.clickOpcion(idx);
+  }
+
+  /** Cierra un modal por título haciendo click DOM en el botón indicado. */
+  private async cerrarModalSiAplica(titulo: RegExp, boton: RegExp, timeout: number): Promise<boolean> {
+    const visible = await this.page
+      .locator('.p-dialog')
+      .filter({ hasText: titulo })
+      .first()
+      .waitFor({ state: 'visible', timeout })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
+    await this.page.evaluate(
+      ({ t, b }) => {
+        const d = Array.from(document.querySelectorAll('.p-dialog')).find((x) =>
+          new RegExp(t, 'i').test(x.textContent || ''),
+        );
+        const btn = Array.from(d?.querySelectorAll('button') ?? []).find((x) =>
+          new RegExp(b, 'i').test((x.textContent || '').trim()),
+        ) as HTMLButtonElement | undefined;
+        btn?.click();
+      },
+      { t: titulo.source, b: boton.source },
+    );
+    await this.page.waitForTimeout(2_000);
+    return true;
+  }
+
   async agregar(): Promise<void> {
-    console.log('[CreditoPycca.agregar] click Agregar (JS click)');
-    // JS click directo — las máscaras residuales interceptan incluso force:true.
-    await this.agregarBtn.evaluate((el: HTMLElement) => el.click());
-    // Esperar a que aparezca la fila del pago registrado (hasta 15s).
+    console.log('[CreditoPycca.agregar] click Agregar');
+    await this.agregarBtn.evaluate((el: HTMLElement) => {
+      const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
+      btn?.click();
+    });
+    // No se completan datos reales del cliente: Cancelar registra el pago igual.
+    if (await this.cerrarModalSiAplica(/Actualizaci[oó]n de datos clientes/, /^Cancelar$/, 8_000)) {
+      console.log('[CreditoPycca.agregar] "Actualización de datos clientes club Pycca" → Cancelar');
+    }
+    if (await this.cerrarModalSiAplica(/Captaciones de seguros/, /^Cerrar$/, 5_000)) {
+      console.log('[CreditoPycca.agregar] "Captaciones de seguros" → Cerrar');
+    }
     const filaOk = await this.pagoRegistradoRow
       .waitFor({ state: 'attached', timeout: 15_000 })
       .then(() => true)
       .catch(() => false);
-    if (!filaOk) {
-      console.log('[CreditoPycca.agregar] fila pago registrado NO apareció tras 15s');
-    } else {
-      console.log('[CreditoPycca.agregar] ✅ fila pago registrado visible');
-    }
-    await this.page.waitForTimeout(1_500);
+    console.log(`[CreditoPycca.agregar] fila pago registrado ${filaOk ? 'visible ✅' : 'NO apareció'}`);
   }
 }

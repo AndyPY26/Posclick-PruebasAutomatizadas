@@ -10,6 +10,7 @@ import {
   type ItemCarrito,
 } from './fixtures/dataset';
 import { CreditoPyccaForm } from './pages/PaymentPage';
+import type { InvoicePage } from './pages/InvoicePage';
 
 /**
  * Suite E2E — 5 casos de negocio avanzados POSCLICK 1.12.0-rc.1
@@ -24,6 +25,20 @@ import { CreditoPyccaForm } from './pages/PaymentPage';
  */
 
 test.describe.configure({ mode: 'serial' });
+
+/**
+ * WORKAROUND D-07: con totales > $2,000 el POS no registra el segundo pago en
+ * efectivo. Los casos que cobran en efectivo (3, 6, 7) acotan el carrito a este
+ * rango para validar el flujo con un solo pago. Revertir cuando dev lo corrija.
+ */
+const TOTAL_EFECTIVO_MIN = 1_000;
+const TOTAL_EFECTIVO_MAX = 1_500;
+
+/** Carrito acotado al rango de pago en efectivo (1 unidad por SKU). */
+async function carritoBajoTope(invoice: InvoicePage): Promise<ItemCarrito[]> {
+  const skus = await invoice.cargarCarritoConTope(TOTAL_EFECTIVO_MIN, TOTAL_EFECTIVO_MAX);
+  return skus.map((sku) => ({ sku, cantidad: 1 }));
+}
 
 /* ==========================================================================
  * CASO 1 — Restricción de suspensión única y recuperación unitaria
@@ -129,8 +144,7 @@ test('Caso 3: cliente de facturación y persona de retiro son independientes', a
   const { invoice, dashboard, page } = pos;
   const [clienteA, clienteB, , clienteD] = tomarCedulas(4);
 
-  const carrito = generarCarrito(10, 10);
-  await invoice.cargarCarrito(carrito);
+  const carrito = await carritoBajoTope(invoice); // D-07: se cobra en efectivo
 
   // Entrega a futuro (retiro en sucursal) — exige autorización de supervisor.
   const delivery = await invoice.irAEntregaFuturaConAutorizacion();
@@ -177,10 +191,11 @@ test('Caso 3: cliente de facturación y persona de retiro son independientes', a
   // esté seleccionado. La FACTURA sí llega al driver de impresión.
   // Cuando dev lo corrija, invertir esta aserción y validar los nombres
   // Facturación=A / Retiro=D en el documento.
-  await expect(
-    historial.sinDocumentos,
+  // En 1.13.0 el aviso es efímero: se captura durante la autorización.
+  expect(
+    historial.sinDocumentosVisto,
     'DEFECTO D-01: el voucher de entrega no se puede reimprimir',
-  ).toBeVisible();
+  ).toBe(true);
 });
 
 /* ==========================================================================
@@ -227,7 +242,8 @@ test('Caso 5: la simulación de cuotas coincide con el documento emitido', async
   const { invoice, page } = pos;
 
   console.log('[Caso5] 1/10 → cargar carrito aleatorio');
-  await invoice.cargarCarrito(generarCarrito());
+  // Carrito chico: evita 'Validación de saldo – Sin Stock' y quedar sobre el cupo.
+  await invoice.cargarCarritoConTope(500, 1_000);
 
   console.log('[Caso5] 2/10 → asignar cédula al cliente de facturación');
   await invoice.persona.asignar(tomarCedulas(1)[0]);
@@ -250,7 +266,7 @@ test('Caso 5: la simulación de cuotas coincide con el documento emitido', async
   const disponible = montoDe(await credito.disponibleInput.inputValue());
   expect(disponible, 'la tarjeta debe tener cupo disponible').toBeGreaterThan(0);
 
-  console.log('[Caso5] 7/10 → seleccionar financiamiento (pos. 3 ≈ 3 cuotas)');
+  console.log('[Caso5] 7/10 → seleccionar financiamiento (3 cuotas)');
   await credito.seleccionarFinanciamiento(3);
 
   console.log('[Caso5] 8/10 → leer simulación');
@@ -270,7 +286,7 @@ test('Caso 5: la simulación de cuotas coincide con el documento emitido', async
   console.log('[Caso5] 10/10 → verificar consistencia');
   const registrado = await credito.pagoRegistradoRow.innerText();
   expect(registrado).toContain(String(simulacion.plazo));
-  expect(montoDe(registrado)).toBeCloseTo(simulacion.valor, 2);
+  expect(montoDe(await credito.pagoRegistradoMonto.innerText())).toBeCloseTo(simulacion.valor, 2);
   expect(simulacion.cuota * simulacion.plazo).toBeGreaterThanOrEqual(simulacion.valor - 0.05);
   await evidencia(page, 'caso5-consistencia-cuotas');
   console.log('[Caso5] ✅ completado');
@@ -295,8 +311,6 @@ test('Caso 5: la simulación de cuotas coincide con el documento emitido', async
  * efectivo. Se acota el carrito para validar el flujo estándar de un solo pago.
  * Revertir a `generarCarrito(5, 6)` cuando dev corrija el pago dividido.
  * ========================================================================*/
-const CASO6_TOTAL_MIN = 1_000;
-const CASO6_TOTAL_MAX = 1_500;
 
 test('Caso 6: venta en efectivo con cliente CLUB PYCCA (total $1,000-$1,500)', async ({
   pos,
@@ -309,13 +323,13 @@ test('Caso 6: venta en efectivo con cliente CLUB PYCCA (total $1,000-$1,500)', a
   await invoice.persona.asignar(cedula);
   await expect(page.locator(`text=${cedula}`).first(), 'el cliente debe quedar asignado').toBeVisible();
 
-  console.log(`[Caso6] 2/5 → armar carrito entre $${CASO6_TOTAL_MIN} y $${CASO6_TOTAL_MAX}`);
-  await invoice.cargarCarritoConTope(CASO6_TOTAL_MIN, CASO6_TOTAL_MAX);
+  console.log(`[Caso6] 2/5 → armar carrito entre $${TOTAL_EFECTIVO_MIN} y $${TOTAL_EFECTIVO_MAX}`);
+  await invoice.cargarCarritoConTope(TOTAL_EFECTIVO_MIN, TOTAL_EFECTIVO_MAX);
 
   console.log('[Caso6] 3/5 → verificar total dentro del rango');
   const total = await invoice.leerTotal();
-  expect(total, 'total debe quedar bajo el límite de pago en efectivo').toBeGreaterThanOrEqual(CASO6_TOTAL_MIN);
-  expect(total).toBeLessThanOrEqual(CASO6_TOTAL_MAX);
+  expect(total, 'total debe quedar bajo el límite de pago en efectivo').toBeGreaterThanOrEqual(TOTAL_EFECTIVO_MIN);
+  expect(total).toBeLessThanOrEqual(TOTAL_EFECTIVO_MAX);
   await evidencia(page, 'caso6-01-carrito-con-cliente');
 
   console.log('[Caso6] 4/5 → continuar a pago');
@@ -350,8 +364,7 @@ test('Caso 7: venta con entrega futura y pago en efectivo', async ({ pos }) => {
   const { invoice, page } = pos;
 
   console.log('[Caso7] 1/7 → generar + cargar carrito');
-  const carrito = generarCarrito(5, 6);
-  await invoice.cargarCarrito(carrito);
+  const carrito = await carritoBajoTope(invoice); // D-07: se cobra en efectivo
 
   console.log('[Caso7] 2/7 → asignar cliente');
   await invoice.persona.asignar(tomarCedulas(1)[0]);

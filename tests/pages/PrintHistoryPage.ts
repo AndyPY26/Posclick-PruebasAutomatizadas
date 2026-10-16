@@ -13,6 +13,12 @@ export class PrintHistoryPage {
 
   readonly sinDocumentos = this.page.locator('text=No hay documentos para imprimir');
   readonly impresoraNoEncontrada = this.page.locator('text=Impresora no encontrada');
+  /**
+   * FE 1.13.0: "No hay documentos para imprimir" es un aviso efímero (dura
+   * pocos segundos tras la autorización). Se escucha mientras se autoriza y se
+   * guarda aquí si llegó a aparecer.
+   */
+  sinDocumentosVisto = false;
 
   async esperarCargada(): Promise<void> {
     await this.page.waitForURL(/print-history/, { timeout: 30_000 });
@@ -28,8 +34,12 @@ export class PrintHistoryPage {
 
   async imprimirConAutorizacion(): Promise<void> {
     await this.imprimirBtn.click();
+    const aviso = this.sinDocumentos
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false);
     const auth = new SupervisorAuthDialog(this.page);
     await auth.autorizar();
-    await this.page.waitForTimeout(4_000);
+    this.sinDocumentosVisto = await aviso;
   }
 }
