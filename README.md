@@ -1,10 +1,12 @@
 # Suite E2E POSCLICK
 
-Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://playwright.dev/) + planes de prueba de TestSprite. Cubre 5 flujos avanzados del POS (suspensión de ventas, ofertas especiales, independencia de clientes, autorización de supervisor y cuotas de crédito).
+Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://playwright.dev/) + planes de prueba de TestSprite. Cubre 7 flujos del POS (suspensión de ventas, ofertas especiales, independencia de clientes, autorización de supervisor, cuotas de crédito, venta en efectivo y entrega futura).
 
 - **App bajo prueba:** `http://localhost:4200`
-- **FE/BE:** `1.12.0-rc.1`
-- **Caja:** `004-112`
+- **FE/BE:** `1.13.0` / `1.13.0` (verificado 2026-10-16)
+- **Caja:** `004-150`
+
+> El detalle de selectores, modales nuevos de 1.13.0 y estado de cada caso vive en [`context.md`](./context.md), que es la fuente de verdad.
 
 ## Requisitos
 
@@ -108,13 +110,17 @@ Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus 
 
 ## Casos cubiertos
 
+Estado al 2026-10-16 (detalle en `context.md`):
+
 | # | Caso | Estado |
 |---|---|---|
-| 1 | Suspensión única | ✅ (restricción = botón `disabled`, no mensaje) |
-| 2 | Oferta Especial `H0867` | ✅ completo |
-| 3 | Independencia clientes | ✅ + defecto D-01 |
+| 1 | Suspensión única | ✅ |
+| 2 | Oferta Especial | ❌ datos: el cupón de `CREDENCIALES.ofertaEspecial` ya no carga la proforma |
+| 3 | Independencia clientes | ❌ datos: sin stock de entrega futura (D-06) |
 | 4 | Autorización supervisor | ✅ hasta pantalla |
-| 5 | Cuotas crédito | ❌ sin cédula con cupo |
+| 5 | Cuotas crédito | ❌ datos/backend: sin stock + backend en "Cargando…" |
+| 6 | Venta efectivo + cliente | ✅ con carrito acotado a $1,000–$1,500 (workaround D-07) |
+| 7 | Entrega futura + efectivo | ⏸ bloqueado por stock (D-06) |
 
 ### Defectos conocidos
 
@@ -123,6 +129,8 @@ Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus 
 - **D-03** Créditos de prueba bloqueados / sobregirados.
 - **D-04** Autorización repetitiva.
 - **D-05** Código de oferta no visible en cobro.
+- **D-06** SKUs del pool sin stock de entrega futura.
+- **D-07** Con carrito > $2,000 en efectivo, solo se registra el primer pago de $2,000.
 
 **No verificable desde la suite:** contenido de documentos impresos (sin impresora ni preview).
 
@@ -133,7 +141,9 @@ Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus 
 - **Cambiar cliente:** primero `clear_button`; si ya hay cliente asignado, el campo de búsqueda no existe.
 - **Ofertas Especiales** no es un módulo del dashboard: lupa → "Cargar factura" → pestaña "Oferta Especial".
 - **"Envío a"** (`/pos-ui/delivery`) = persona de retiro; usa el mismo componente que el cliente de facturación.
-- Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo.
+- Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. En 1.13.0 el regalo suma su precio al total y hay que pagar la diferencia.
+- **Botones `lib-button` / `p-button`:** el click debe ir al `<button>` interno; sobre el wrapper no dispara la acción.
+- **Servidor remoto:** `pos4-dev` no es un repo git; los cambios locales llegan con `.\sync.ps1`.
 
 ## `context.md` como base de conocimiento (RAG)
 

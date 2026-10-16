@@ -1,6 +1,6 @@
 import { Page, expect, Locator } from '@playwright/test';
 import type { ItemCarrito } from '../fixtures/dataset';
-import { generarImei } from '../fixtures/dataset';
+import { generarImei, montoDe, SKU_POOL } from '../fixtures/dataset';
 import { PersonSearchComponent } from './components/PersonSearchComponent';
 import { CargarFacturaDialog } from './CargarFacturaDialog';
 import { SuspendedTxDialog } from './SuspendedTxDialog';
@@ -76,9 +76,15 @@ export class InvoicePage {
 
   /** Pasa a /pos-ui/pay. Devuelve la Page de pago. */
   async continuar(): Promise<PaymentPage> {
+    // El modal "Descuentos disponibles para el cliente" (1.13.0) deshabilita
+    // Continuar mientras está abierto; puede quedar abierto o salir al pulsar.
+    await this.persona.cerrarDescuentosClienteSiAplica();
     // Varios paneles (cliente, resumen) dejan p-dialog-mask residuales que
     // interceptan el click incluso con force → JS click directo.
     await this.continuarBtn.first().evaluate((el: HTMLElement) => el.click());
+    if (await this.persona.cerrarDescuentosClienteSiAplica()) {
+      await this.continuarBtn.first().evaluate((el: HTMLElement) => el.click());
+    }
     // Si hay stock insuficiente, aparece modal "Validación de saldo" con botones
     // Cancelar/Continuar. Aceptamos para que la app ajuste cantidades y proceda.
     const titulo = this.page.locator('text=Validación de saldo');
@@ -204,6 +210,60 @@ export class InvoicePage {
           items.map((i) => i.sku).join(', '),
       );
     }
+  }
+
+  /** Total del carrito leído de `#mf_sale_total_value` ("$1,234.56" → 1234.56). */
+  async leerTotal(): Promise<number> {
+    return montoDe(await this.totalValor.innerText().catch(() => '0'));
+  }
+
+  /**
+   * Arma un carrito cuyo total quede dentro de [minTotal, maxTotal].
+   *
+   * Los precios no están en el dataset: se agregan SKUs aleatorios de a 1 unidad,
+   * se lee el total real tras cada uno y, si se pasa del tope, se quita ese SKU.
+   * Útil para esquivar el límite de $2,000 por pago en efectivo (D-07).
+   */
+  async cargarCarritoConTope(minTotal: number, maxTotal: number, maxIntentos = 40): Promise<string[]> {
+    const pool = [...SKU_POOL].sort(() => Math.random() - 0.5).slice(0, maxIntentos);
+    const cargados: string[] = [];
+    for (const sku of pool) {
+      if ((await this.leerTotal()) >= minTotal) break;
+      try {
+        await this.cargarCarrito([{ sku, cantidad: 1 }]);
+      } catch {
+        continue; // SKU inexistente o sin stock
+      }
+      const total = await this.leerTotal();
+      if (total > maxTotal) {
+        console.log(`[cargarCarritoConTope] ${sku} lleva el total a $${total} > $${maxTotal} → quitar`);
+        await this.quitarProducto(sku);
+        continue;
+      }
+      cargados.push(sku);
+      console.log(`[cargarCarritoConTope] +${sku} → total=$${total}`);
+    }
+    const final = await this.leerTotal();
+    console.log(`[cargarCarritoConTope] total final=$${final} skus=${cargados.join(', ')}`);
+    if (final < minTotal || final > maxTotal) {
+      throw new Error(
+        `No se pudo armar un carrito entre $${minTotal} y $${maxTotal} (quedó en $${final}).`,
+      );
+    }
+    return cargados;
+  }
+
+  /** Quita una fila del carrito con el tacho de esa fila (+ confirmación si aparece). */
+  async quitarProducto(sku: string): Promise<void> {
+    await this.clickCustom(this.page.locator(`#mf_sale_product_list_table_trash_${sku}`));
+    await this.page.waitForTimeout(1_200);
+    await this.confirmarEliminarBtn
+      .first()
+      .evaluate((el: HTMLElement) => el.click())
+      .catch(() => undefined);
+    await this.page
+      .locator(`#mf_sale_product_list_table_row_${sku}`)
+      .waitFor({ state: 'detached', timeout: 10_000 });
   }
 
   /** Vacía el carrito en curso (Cancelar → "Sí, eliminar"). Idempotente. */

@@ -43,5 +43,34 @@ export class PersonSearchComponent {
     await this.documento.fill(doc);
     await this.clickCustom(this.buscar).catch(() => this.documento.press('Enter'));
     await this.page.waitForTimeout(2_500);
+    await this.cerrarDescuentosClienteSiAplica();
+  }
+
+  /**
+   * FE 1.13.0: clientes con descuento permanente/colaborador abren el modal
+   * informativo "Descuentos disponibles para el cliente" (solo botón Aceptar).
+   * Si no se acepta, la asignación del cliente no se completa y bloquea
+   * "Continuar" del carrito.
+   */
+  async cerrarDescuentosClienteSiAplica(): Promise<boolean> {
+    const titulo = this.page.locator('text=Descuentos disponibles para el cliente');
+    const visible = await titulo
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
+    console.log('[PersonSearch] modal "Descuentos disponibles para el cliente" → Aceptar');
+    await this.page.evaluate(() => {
+      const d = Array.from(document.querySelectorAll('.p-dialog')).find((x) =>
+        /Descuentos disponibles para el cliente/.test(x.textContent || ''),
+      );
+      const btn = Array.from(d?.querySelectorAll('button') ?? []).find((b) =>
+        /Aceptar/.test(b.textContent || ''),
+      ) as HTMLButtonElement | undefined;
+      btn?.click();
+    });
+    await titulo.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => undefined);
+    await this.page.waitForTimeout(1_500);
+    return true;
   }
 }

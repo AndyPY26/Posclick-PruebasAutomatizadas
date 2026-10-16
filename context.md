@@ -1,6 +1,9 @@
 # Context — Suite E2E POSCLICK
 
-App: `http://localhost:4200` · FE `1.12.0-rc.5` / BE `1.12.0-rc.3` (verificado 2026-10-15) · Caja `004-112`
+App: `http://localhost:4200` · FE `1.13.0` / BE `1.13.0` (verificado 2026-10-16) · Caja `004-150`
+
+> Historial: hasta 2026-10-15 era FE `1.12.0-rc.5` / BE `1.12.0-rc.3` en la caja `004-112`. Los selectores mapeados en rc.5 siguen vigentes en 1.13.0 salvo lo indicado en "Resumen de pago".
+> Al cambiar de caja, un carrito abierto con la caja anterior falla con *"El id de la transacción no corresponde al posId/transaccionType"*: vaciarlo y empezar de nuevo.
 
 **Acceso desde Windows:** túnel SSH a `pos4-dev` con los dos puertos (frontend + backend):
 `ssh -fN -L 4200:localhost:4200 pos4-dev` y `ssh -fN -L 3000:localhost:3000 pos4-dev`. Sin el 3000 la app queda en blanco (`/api/configuration/v1/pos` falla). Si `curl` cuelga, matar los `ssh` zombis y relanzar.
@@ -107,13 +110,32 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 - **Botones duplicados:** en `/invoice` y `/pay` hay un "Continuar" disabled en el header; `button:has-text("Continuar").first()` lo toma. Usar siempre los ids.
 - **Buscador de persona en `/delivery`:** coexisten dos instancias con los mismos ids (facturación oculta + "Envío a"). Filtrar con `:visible`. `#mf_person_customer_search_add_button` = **agregar cliente nuevo**, no limpiar.
 - **Suspender / Entrega futura** solo se renderizan con ≥1 producto en el carrito.
-- **Pago en efectivo (rc.5):** "Agregar" registra el pago como *Pendiente* sin modal. El modal **"Procesando Pago"** (botón verde "Procesar") aparece recién al pulsar "Continuar" del summary, uno por pago. Pendiente real = texto "Pendiente $X" del summary panel (no el badge de la tabla). Límite $2,000 por pago: con carritos mayores, el segundo "Agregar" no registra (sin resolver, ver D-07).
+- **Pago en efectivo:** "Agregar" registra el pago como *Pendiente* sin modal. El modal **"Procesando Pago"** (botón verde "Procesar") aparece recién al pulsar "Continuar" del summary, uno por pago. Límite $2,000 por pago: con carritos mayores, el segundo "Agregar" no registra (sin resolver, ver D-07).
+- **Regalo que cambia el total (1.13.0):** al pulsar "Continuar" en `/pay` puede aparecer "Seleccionar regalo" (promo *DECO – Compra x Compra Tiraderas*, tiraderas G03705/G03706 a $2.99). Elegir un regalo **suma su precio al total** y **deselecciona EFECTIVO**. Ejemplo reproducido: total $1,111.62 → $1,114.61, descuento $111.60 → $109.60, pendiente $0 → **$2.99**. Hay que volver a seleccionar EFECTIVO, pagar el pendiente y pulsar Continuar otra vez (`PaymentPage.pagarEnEfectivo` lo hace en rondas).
+
+- **"Descuentos disponibles para el cliente" (1.13.0):** al asignar un cliente con descuento permanente/colaborador sale un modal informativo (tabla forma de pago / % / descripción) con solo "Aceptar". Si no se acepta, la asignación no se completa y "Continuar" del carrito queda deshabilitado. Lo cierra `PersonSearchComponent.cerrarDescuentosClienteSiAplica()` (también se llama en `InvoicePage.continuar()`).
+- **"Registro de pago en efectivo" (1.13.0):** después de cada "Procesar" aparece este modal. Campos: `input#paymentAmount` (Pagar, deshabilitado), `input#receivedAmount` (Recibido *, `p-inputnumber`: hay que **teclear**, `fill` no sincroniza), `input#changeAmount` (Cambio), `#newBanknoteValue` + `#newBanknoteSerial` + Agregar (`#mf_pay_register_cash`) para registrar billetes de $50/$100. "Aceptar" = `[id="button_actions.accept"]`. **Registrar billetes no es obligatorio**: con Recibido ≥ Pagar se habilita Aceptar (probado con $14.99 y $1,500).
+- **Final de venta:** modal "Transacción finalizada – Retire la factura y entregue al cliente" (Total / Recibido / Su cambio + Aceptar), y luego "Cierre de Cajón Monedero" (Aceptar). `cerrarDialogos()` los cierra.
+- **Secuencia completa de pago en efectivo (1.13.0):** EFECTIVO → Agregar (hasta pendiente $0) → Continuar → [Seleccionar regalo → volver a EFECTIVO y pagar la diferencia → Continuar] → Procesando Pago (Procesar) → Registro de pago en efectivo (Recibido + Aceptar) → Transacción finalizada. Varios pagos en efectivo se consolidan en uno.
+
+### Resumen de pago (`/pos-ui/pay`, FE 1.13.0)
+
+Los valores del summary panel **no tienen id**. Se leen por estructura dentro de `[id^="summary_panel_body"]` (`PaymentPage.leerResumen()`):
+
+| Campo | Estructura | Nota |
+|---|---|---|
+| Valor total | `<h2>Valor total</h2>` + `<h2>$X</h2>` | Incluye IVA y regalos agregados |
+| Valor registrado | `<h2>Valor registrado</h2>` + `<h2>$X</h2>` | Suma de pagos en la tabla |
+| Descuento | `<h2>Descuento</h2>` + `<h2>$X</h2>` | Puede venir negativo (`-$2.00`) |
+| **Pendiente** | `<span>Pendiente</span>` + **único `<h1>`** del panel | **Monto exacto a pagar**; Continuar exige que sea $0 |
+
+En `/pos-ui/invoice` el resumen sí tiene ids: `#mf_sale_discount_value`, `#mf_sale_subtotal_value`, `#mf_sale_taxable_base_value` (aparece **dos veces**: base IVA y base 0%), `#mf_sale_total_tax_value` (IVA 15%), `#mf_sale_total_value`. Total = base imponible + impuesto. No hay rubros de envío ni recargo en una venta en tienda.
 - **Dashboard rc.5:** 16 módulos (nuevos: Abonos y Crédito Pycca, Cambio y devolución, Reverso de Abono). Los `nth` usados (0,3,4,8) siguen valiendo por casualidad.
 - **"Factura en curso":** si un run aborta con carrito abierto, el dashboard bloquea Apertura con ese modal. Ir a Facturación → Regresar → "Sí, eliminar".
 
 ## Estado conocido
 
-Estado tras corrida contra rc.5 (2026-10-15):
+Estado (corridas 2026-10-15 en rc.5 y 2026-10-16 en 1.13.0):
 
 | Caso | Estado |
 |---|---|
@@ -122,10 +144,10 @@ Estado tras corrida contra rc.5 (2026-10-15):
 | 3 Independencia clientes | ❌ "Envío a" OK; entrega falla: "No se encontraron tiendas." para todos los SKUs (D-06) |
 | 4 Autorización supervisor | ✅ |
 | 5 Cuotas crédito | ❌ "Validación de saldo – Sin Stock" → auth supervisor → backend queda en "Cargando…" >30 s |
-| 6 Venta efectivo + cliente | ❌ pago dividido >$2,000 no avanza (D-07) |
+| 6 Venta efectivo + cliente | ✅ 2026-10-16 en 1.13.0 (1 passed, 4.0 min). Workaround D-07: carrito acotado a $1,000–$1,500 con `cargarCarritoConTope`. Maneja regalo (+$2.99), descuentos de cliente y registro de efectivo |
 | 7 Venta entrega futura efectivo | ⏸ no corrido; mismo bloqueo de stock que Caso 3 |
 
-**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · D-06 pool de SKUs sin stock de delivery en el centro 004-112 (bloquea Caso 3 y 7 hasta reponer inventario) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
+**Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · D-06 pool de SKUs sin stock de delivery en el centro 004-112 (re-verificar en 004-150) (bloquea Caso 3 y 7 hasta reponer inventario) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
 
 **Dataset ampliado (2026-10):** `SKU_POOL` crece de 32 → ~290 (familias O, D, M, L, A, Y). `CEDULA_POOL` crece de 24 → 33 incluyendo lote CLUB PYCCA - CREDITO con cédulas reales de clientes con tarjeta de crédito activa.
 

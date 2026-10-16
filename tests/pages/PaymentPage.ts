@@ -1,5 +1,5 @@
-import { Page, expect } from '@playwright/test';
-import { seleccionarEnDropdown } from '../fixtures/dataset';
+import { Page, Locator, expect } from '@playwright/test';
+import { seleccionarEnDropdown, montoDe } from '../fixtures/dataset';
 
 /**
  * Pantalla de cobro (/pos-ui/pay).
@@ -37,7 +37,10 @@ export class PaymentPage {
     .locator('button.p-button-success:has-text("Procesar"), button:has-text("Procesar")')
     .first();
   private readonly aceptarDialogo = this.page.locator('p-dialog button:has-text("Aceptar")');
-  private readonly recibidoInput = this.page.locator('input[placeholder="$ 0.00"]').nth(1);
+  // Modal "Registro de pago en efectivo" (FE 1.13.0).
+  private readonly pagarMontoInput = this.page.locator('input#paymentAmount');
+  private readonly recibidoInput = this.page.locator('input#receivedAmount');
+  private readonly aceptarRegistroEfectivoBtn = this.page.locator('[id="button_actions.accept"]').last();
 
   readonly credito = new CreditoPyccaForm(this.page);
 
@@ -56,92 +59,66 @@ export class PaymentPage {
     }
   }
 
-  /** Lee el valor numérico de un selector de texto tipo "$1,234.56". */
-  private async leerMonto(locator: ReturnType<Page['locator']>): Promise<number> {
-    const txt = await locator.innerText().catch(() => '');
-    return Number((txt.match(/[\d]+[\d.,]*/)?.[0] ?? '0').replace(/,/g, '')) || 0;
-  }
-
-  /**
-   * Pendiente real que la UI muestra en el summary panel (derecha, al pie):
-   *   "Pendiente $X,XXX.XX"
-   * Es la fuente de verdad del POS; el input "Valor a pagar" puede
-   * desincronizarse con el model de p-inputnumber tras varios pagos.
-   */
-  private async leerPendiente(): Promise<number> {
-    const txt = await this.page
-      .evaluate(() => {
-        // Buscar panel resumen y extraer "Pendiente $XXXX.XX".
-        const roots = Array.from(
-          document.querySelectorAll('[id^="summary_panel"], aside, [role=complementary], body'),
-        );
-        for (const root of roots) {
-          const match = (root.textContent || '').match(/Pendiente\s*\$?\s*([\d.,]+)/i);
-          if (match) return match[1];
-        }
-        return '0';
+  /** Click en el <button> real de un wrapper lib-button/p-button (el ngClick vive ahí). */
+  private async clickInterno(locator: Locator): Promise<void> {
+    await locator
+      .evaluate((el: HTMLElement) => {
+        const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
+        btn?.click();
       })
-      .catch(() => '0');
-    return Number((txt ?? '0').replace(/,/g, '')) || 0;
+      .catch(async () => locator.click({ force: true }));
   }
 
   /**
-   * El POS abre un modal "Procesando Pago" tras cada Agregar para confirmar
-   * el pago con un botón "Procesar". Resuelve el modal haciendo click DOM
-   * directo sobre el <button> real dentro del p-dialog (los wrappers p-button
-   * / lib-button a veces se tragan el click delegado de Playwright).
+   * Resumen del summary panel de /pos-ui/pay (FE 1.13.0). Los valores no tienen
+   * id: "Valor total", "Valor registrado" y "Descuento" son pares <h2> etiqueta
+   * + <h2> valor, y "Pendiente" es un <span> seguido del único <h1> del panel.
+   * "Pendiente" es el monto exacto que el POS exige para dejar finalizar.
    */
-  /**
-   * El POS puede abrir un modal "Procesando Pago" (botón "Procesar") que debe
-   * confirmarse para que el pago asociado quede commiteado. Se busca con un
-   * walk recursivo que atraviesa shadow DOM (PrimeNG v18 renderiza algunos
-   * dialogs por fuera del body principal).
-   *
-   * TODO: el walk encuentra el <p-dialog> en la UI visual pero `evaluate` lo
-   * reporta como no visible en varios casos — queda pendiente diagnóstico
-   * fino. Por ahora la lógica es best-effort y no bloquea el flujo.
-   */
-  private async confirmarProcesandoPagoSiAplica(): Promise<void> {
-    for (let intento = 0; intento < 3; intento++) {
-      const clicked = await this.page.evaluate(() => {
-        const allElements: Element[] = [];
-        const walk = (root: Document | ShadowRoot | Element) => {
-          const els = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
-          allElements.push(...els);
-          for (const el of els) {
-            const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-            if (sr) walk(sr);
-          }
-        };
-        walk(document);
-        for (const el of allElements) {
-          const tag = el.tagName.toLowerCase();
-          if (!['button', 'p-button', 'lib-button'].includes(tag) && el.getAttribute('role') !== 'button') continue;
-          const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-          const label = el.getAttribute('label') || el.getAttribute('aria-label') || '';
-          if (!/procesar/i.test(t) && !/procesar/i.test(label)) continue;
-          const r = el.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) continue;
-          if ((el as HTMLButtonElement).disabled) continue;
-          if (el.getAttribute('aria-disabled') === 'true') continue;
-          const inner = el.tagName === 'BUTTON' ? el : el.querySelector('button');
-          (inner as HTMLButtonElement | null)?.click();
-          return true;
-        }
-        return false;
-      });
-      if (!clicked) return;
-      await this.page.waitForTimeout(2_500);
-    }
+  async leerResumen(): Promise<{ total: number; registrado: number; descuento: number; pendiente: number }> {
+    return this.page.evaluate(() => {
+      const num = (t?: string | null) => Number((t || '').replace(/[^0-9.]/g, '')) || 0;
+      const panel = document.querySelector('[id^="summary_panel_body"]');
+      const h2 = Array.from(panel?.querySelectorAll('h2') ?? []).map((h) => (h.textContent || '').trim());
+      const valor = (label: string) => {
+        const i = h2.indexOf(label);
+        return i >= 0 ? num(h2[i + 1]) : 0;
+      };
+      return {
+        total: valor('Valor total'),
+        registrado: valor('Valor registrado'),
+        descuento: valor('Descuento'),
+        pendiente: num(panel?.querySelector('h1')?.textContent),
+      };
+    });
+  }
+
+  /** Selecciona EFECTIVO si no está marcado (el regalo lo deselecciona). */
+  private async seleccionarEfectivo(): Promise<void> {
+    const marcado = await this.page
+      .locator('#check1')
+      .isChecked()
+      .catch(() => false);
+    if (marcado) return;
+    await this.page
+      .locator('label[for=check1]')
+      .evaluate((el: HTMLElement) => el.click())
+      .catch(() => this.efectivo.first().evaluate((el: HTMLElement) => el.click()));
+    await this.page.waitForTimeout(1_500);
   }
 
   /**
-   * Si está el modal "Seleccionar regalo", selecciona el primer radio y acepta.
-   * El POS lo lanza al registrar ciertos pagos; si no se resuelve bloquea el
-   * resto del flujo.
+   * Si aparece el modal "Seleccionar regalo", elige el primer regalo y acepta.
+   * Devuelve true si hubo regalo: en 1.13.0 el regalo SUMA su precio al total
+   * (p.ej. tiradera $2.99) y deselecciona el método de pago, así que queda un
+   * pendiente nuevo que hay que cubrir.
    */
-  private async resolverRegaloSiAplica(): Promise<void> {
-    if (!(await this.modalRegalo.isVisible().catch(() => false))) return;
+  private async resolverRegaloSiAplica(): Promise<boolean> {
+    const visible = await this.modalRegalo
+      .waitFor({ state: 'visible', timeout: 4_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
     const primerRegalo = this.page.locator('[role=dialog] input[type=radio]').first();
     await primerRegalo
       .evaluate((el: HTMLElement) => el.click())
@@ -152,38 +129,25 @@ export class PaymentPage {
       .evaluate((el: HTMLElement) => el.click())
       .catch(() => undefined);
     await this.page.waitForTimeout(2_500);
+    return true;
   }
 
   /**
-   * Pago completo en efectivo.
-   *
-   * El POS actual tiene un límite por transacción (ej. $2,000) para pagos en
-   * efectivo. Si el total supera el límite, hace falta añadir varios pagos
-   * fraccionados hasta cubrirlo.
+   * Registra pagos en efectivo hasta que el pendiente del resumen llegue a 0.
+   * Cada pago se limita a $2,000 (tope por transacción en efectivo; ver D-07).
    */
-  async pagarEnEfectivo(): Promise<void> {
-    const MAX_INTENTOS = 15;
+  private async registrarEfectivoHastaCubrir(): Promise<void> {
     const LIMITE_EFECTIVO = 2000;
+    for (let i = 0; i < 15; i++) {
+      const r = await this.leerResumen();
+      console.log(
+        `[pagarEnEfectivo] iter=${i} total=$${r.total} registrado=$${r.registrado} pendiente=$${r.pendiente}`,
+      );
+      if (r.pendiente === 0) return;
 
-    // Seleccionar EFECTIVO una vez. Click repetido sobre un método ya
-    // seleccionado NO refresca el input "Valor a pagar".
-    await this.efectivo.first().evaluate((el: HTMLElement) => el.click());
-    await this.page.waitForTimeout(1_500);
-
-    for (let i = 0; i < MAX_INTENTOS; i++) {
-      // Resolver modales abiertos del ciclo previo.
-      await this.confirmarProcesandoPagoSiAplica();
-      await this.resolverRegaloSiAplica();
-
-      // Fuente de verdad: pendiente del summary panel.
-      const pendiente = await this.leerPendiente();
-      console.log(`[pagarEnEfectivo] iter=${i} pendiente=${pendiente}`);
-      if (pendiente === 0) break;
-
-      const monto = Math.min(pendiente, LIMITE_EFECTIVO);
-
-      // Fill explícito: focus + select vía DOM, luego fill + Tab para
-      // sincronizar el model de p-inputnumber con el valor a pagar.
+      await this.seleccionarEfectivo();
+      const monto = Math.min(r.pendiente, LIMITE_EFECTIVO);
+      // focus + select + fill + Tab sincroniza el model de p-inputnumber.
       await this.inputPrincipal
         .evaluate((el: HTMLInputElement) => {
           el.focus();
@@ -193,58 +157,81 @@ export class PaymentPage {
       await this.inputPrincipal.fill(monto.toFixed(2));
       await this.inputPrincipal.press('Tab');
       await this.page.waitForTimeout(700);
-
-      // #button_agregar es un <p-button> custom element; disparar ngClick
-      // requiere clickear el <button> real dentro, no el wrapper.
-      await this.agregarBtn
-        .evaluate((el: HTMLElement) => {
-          const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
-          btn?.click();
-        })
-        .catch(async () => this.agregarBtn.click({ force: true }));
+      await this.clickInterno(this.agregarBtn);
       await this.page.waitForTimeout(2_000);
+    }
+    throw new Error('El pendiente no llegó a $0 tras 15 pagos en efectivo.');
+  }
 
-      // Confirmar el modal "Procesando Pago" que aparece tras cada Agregar.
-      await this.confirmarProcesandoPagoSiAplica();
+  /**
+   * Pago completo en efectivo (FE 1.13.0):
+   *  1. Registrar pagos hasta pendiente $0.
+   *  2. Continuar → puede aparecer "Seleccionar regalo"; el regalo agrega su
+   *     precio al total → volver al paso 1 y Continuar de nuevo.
+   *  3. Confirmar cada modal "Procesando Pago" (uno por pago) con "Procesar".
+   */
+  async pagarEnEfectivo(): Promise<void> {
+    for (let ronda = 0; ronda < 3; ronda++) {
+      await this.registrarEfectivoHastaCubrir();
+      await this.clickInterno(this.continuarBtn);
+      await this.page.waitForTimeout(2_000);
+      if (!(await this.resolverRegaloSiAplica())) break;
+      const r = await this.leerResumen();
+      console.log(`[pagarEnEfectivo] regalo agregado → total=$${r.total} pendiente=$${r.pendiente}`);
     }
 
-    // Click Continuar en el footer principal (summary panel). El id apunta a
-    // un <lib-button>; disparar el handler Angular requiere clickear el
-    // <button> interno, no el custom element wrapper.
-    await this.continuarBtn
-      .evaluate((el: HTMLElement) => {
-        const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
-        btn?.click();
-      })
-      .catch(async () => this.continuarBtn.click({ force: true }));
-    await this.page.waitForTimeout(2_000);
-
-    // El POS lanza UN modal "Procesando Pago" por cada pago registrado.
-    // Cada uno se confirma con el botón "Procesar" verde. Hasta que todos
-    // se procesen (o deje de aparecer el modal) no llegamos a "Transacción
-    // finalizada".
-    await this.resolverRegaloSiAplica();
+    // Por cada pago: "Procesando Pago" (Procesar) → "Registro de pago en
+    // efectivo" (Recibido + Aceptar). Se repite hasta "Transacción finalizada".
     for (let i = 0; i < 10; i++) {
-      const procesarLocator = this.page.locator('button:has-text("Procesar")').first();
-      const visible = await procesarLocator
+      if (await this.transaccionFinalizada.isVisible().catch(() => false)) break;
+
+      const procesarVisible = await this.procesarBtn
         .waitFor({ state: 'visible', timeout: 5_000 })
         .then(() => true)
         .catch(() => false);
-      if (!visible) break;
-      await procesarLocator.click({ force: true }).catch(() => undefined);
-      await this.page.waitForTimeout(3_000);
-      await this.resolverRegaloSiAplica();
-    }
+      if (procesarVisible) {
+        console.log(`[pagarEnEfectivo] "Procesando Pago" #${i + 1} → Procesar`);
+        await this.procesarBtn.click({ force: true }).catch(() => undefined);
+        await this.page.waitForTimeout(2_500);
+      }
 
-    if (await this.recibidoInput.isVisible().catch(() => false)) {
-      const aPagar = await this.inputPrincipal.inputValue();
-      await this.recibidoInput.fill(aPagar.replace(/[^0-9.]/g, ''));
-      await this.recibidoInput.press('Tab');
-      await this.page.waitForTimeout(1_200);
-      await this.aceptarDialogo.first().evaluate((el: HTMLElement) => el.click());
+      const registrado = await this.registrarEfectivoRecibidoSiAplica();
+      if (!procesarVisible && !registrado) break;
     }
 
     await expect(this.transaccionFinalizada).toBeVisible({ timeout: 90_000 });
+  }
+
+  /**
+   * Modal "Registro de pago en efectivo" (FE 1.13.0), tras "Procesar":
+   *   #paymentAmount (Pagar, disabled) · #receivedAmount (Recibido *) ·
+   *   #changeAmount (Cambio, disabled) · #newBanknoteValue / #newBanknoteSerial
+   *   (registro opcional de billetes de $50/$100) · [id="button_actions.accept"].
+   * Se registra Recibido = Pagar (cambio $0). La UI no exige registrar billetes
+   * para habilitar Aceptar (verificado con $14.99 y $1,500).
+   * `#receivedAmount` es p-inputnumber: hay que teclear, `fill` no sincroniza el model.
+   */
+  private async registrarEfectivoRecibidoSiAplica(): Promise<boolean> {
+    const titulo = this.page.locator('text=Registro de pago en efectivo');
+    const visible = await titulo
+      .waitFor({ state: 'visible', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!visible) return false;
+
+    const pagar = montoDe(await this.pagarMontoInput.inputValue().catch(() => '0'));
+    console.log(`[pagarEnEfectivo] "Registro de pago en efectivo" → Recibido=$${pagar}`);
+    await this.recibidoInput.evaluate((el: HTMLInputElement) => {
+      el.focus();
+      el.select();
+    });
+    await this.recibidoInput.pressSequentially(pagar.toFixed(2));
+    await this.recibidoInput.press('Tab');
+    await this.page.waitForTimeout(800);
+    await this.clickInterno(this.aceptarRegistroEfectivoBtn);
+    await titulo.waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => undefined);
+    await this.page.waitForTimeout(1_500);
+    return true;
   }
 
   async seleccionarCreditoPycca(): Promise<CreditoPyccaForm> {
