@@ -73,14 +73,15 @@ Los valores reales viven en `.env` (no versionado; plantilla en `.env.example`) 
 
 | Dato | Variable de entorno | Nota |
 |---|---|---|
-| Centro | `E2E_CENTRO_ESPERADO` (def. `004-150`) | `globalSetup` lo compara con el encabezado `CENTRO xxx-xxx`. 2026-10-19: una corrida local cayó en `004-112` y el Caso 1 falló (Y05035 inexistente, 2 SKUs perdidos al recuperar la suspendida). Era el centro equivocado, no un defecto |
+| Centro | `tests/fixtures/centros.ts` + `E2E_CENTRO_ESPERADO` (vacío = automático, valor = estricto) | `globalSetup` lee el encabezado `CENTRO xxx-xxx`, lo publica en `process.env.CAJA_ACTUAL` y `dataset.ts` (`datosCaja()`, `skuPool()`) entrega los datos de ese centro. 2026-10-19: una corrida local cayó en `004-112` y el Caso 1 falló con el pool de 004-150 (Y05035 inexistente; M03781 y Y10974 se perdieron al recuperar la suspendida) |
 | SSO | `E2E_SSO_EMAIL` / `E2E_SSO_PASSWORD` | Usuario de Azure AD de QA |
 | Supervisor (trama lector) | `E2E_SUPERVISOR_TRAMA` | Formato `%<tarjeta>;<id>;<NOMBRE>` + Enter |
 | Clave supervisor | `E2E_SUPERVISOR_CLAVE` | Entrega de caja, entrega futura, reimpresión |
 | Nombre supervisor | `E2E_SUPERVISOR_NOMBRE` | Opcional, por defecto el 3.er campo de la trama |
 | Código vendedor | `E2E_CODIGO_VENDEDOR` | — |
-| Oferta Especial | `E2E_OFERTA_CUPON` + `E2E_OFERTA_CEDULA` | La configurada al 2026-10-16 está **vencida en 004-150** (404); la anterior también |
-| Clientes de prueba | `E2E_CEDULA_POOL` | Cédulas separadas por coma; al 2026-10-16 al menos 3 tenían cupo de Crédito PYCCA (el Caso 5 busca la primera utilizable) |
+| Oferta Especial | `E2E_<centro>_OFERTA_CUPON` + `_OFERTA_CEDULA`; `vigente` en `centros.ts` | No vigente → el Caso 2 se salta. BG961 **vencida en 004-150** (404 desde 2026-10-16); H0867 en 004-112 sin validar |
+| Clientes de prueba | `E2E_CEDULA_POOL` | Cédulas CLUB PYCCA separadas por coma (Casos 3, 5, 6, 7) |
+| Crédito PYCCA | `E2E_<centro>_CREDITO` | Cédulas con cupo en el centro; vacío → el Caso 5 se salta. 004-150: 3 cédulas con cupo confirmadas el 2026-10-16 |
 
 ## Selectores clave (ubicación en POM)
 

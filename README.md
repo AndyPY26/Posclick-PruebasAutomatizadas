@@ -4,7 +4,7 @@ Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://pla
 
 - **App bajo prueba:** `http://localhost:4200`
 - **FE/BE:** `1.13.0` / `1.13.0` (verificado 2026-10-16)
-- **Caja:** `004-150`
+- **Caja:** detectada automáticamente; hay datos para `004-150` y `004-112` (ver [Gestión de entornos](#gestión-de-entornos-centros))
 
 > El detalle de selectores, modales nuevos de 1.13.0 y estado de cada caso vive en [`context.md`](./context.md), que es la fuente de verdad.
 
@@ -43,16 +43,38 @@ Completa el `.env` con los valores reales (pídelos al equipo QA):
 
 | Variable | Para qué se usa | Obligatoria |
 |---|---|---|
-| `E2E_CENTRO_ESPERADO` | Centro POS para el que está armado el dataset; `globalSetup` detiene la suite si el POS muestra otro | No (por defecto `004-150`) |
+| `E2E_CENTRO_ESPERADO` | Modo de entorno: vacío = automático, con valor = estricto (ver [Gestión de entornos](#gestión-de-entornos-centros)) | No |
 | `E2E_SSO_EMAIL`, `E2E_SSO_PASSWORD` | Login SSO de Azure AD | Sí |
 | `E2E_SUPERVISOR_TRAMA` | Trama del lector de tarjeta del supervisor (con `%` inicial) | Sí |
 | `E2E_SUPERVISOR_CLAVE` | Clave del supervisor (entrega de caja, entrega futura, reimpresión) | Sí |
 | `E2E_SUPERVISOR_NOMBRE` | Nombre del supervisor | No (se toma de la trama) |
 | `E2E_CODIGO_VENDEDOR` | Código de vendedor/asesor | Sí |
-| `E2E_OFERTA_CUPON`, `E2E_OFERTA_CEDULA` | Oferta especial vigente (Caso 2) | Solo Caso 2 |
-| `E2E_CEDULA_POOL` | Cédulas de clientes de prueba, separadas por coma (incluir algunas con cupo de crédito para el Caso 5) | Sí |
+| `E2E_CEDULA_POOL` | Cédulas de clientes de prueba CLUB PYCCA, separadas por coma | Sí |
+| `E2E_<centro>_OFERTA_CUPON`, `E2E_<centro>_OFERTA_CEDULA` | Oferta especial del centro (Caso 2), p.ej. `E2E_004_150_OFERTA_CUPON` | No (sin oferta, el Caso 2 se salta) |
+| `E2E_<centro>_CREDITO` | Cédulas con cupo de Crédito PYCCA en el centro (Caso 5), separadas por coma | No (vacío, el Caso 5 se salta) |
 
 Si falta una variable, el caso que la necesita falla con un mensaje explícito, por ejemplo: `Falta la variable E2E_SUPERVISOR_CLAVE en el .env. Copia .env.example a .env y complétala.`
+
+### Gestión de entornos (centros)
+
+Cada caja (centro) tiene su propio catálogo, stock, ofertas y clientes con cupo. La suite **detecta sola el centro** y usa sus datos:
+
+1. `globalSetup` hace login, lee el encabezado del POS (`CENTRO 004-150`) y lo muestra en consola:
+   ```
+   [globalSetup] POS detectado: CENTRO 004-112 · modo automático
+   [globalSetup] Usando datos de 004-112: 10 SKUs · oferta no vigente · 0 cédulas con crédito
+   ```
+2. Publica el centro en `process.env.CAJA_ACTUAL`; `dataset.ts` (`datosCaja()`, `skuPool()`) entrega a los tests los datos de ese centro desde `tests/fixtures/centros.ts`.
+3. Los casos que dependen de datos del centro se **saltan** con motivo en vez de fallar: el Caso 2 si el centro no tiene oferta vigente, el Caso 5 si no tiene cédulas con crédito.
+
+`E2E_CENTRO_ESPERADO` define el modo:
+
+| Valor | Modo | Comportamiento |
+|---|---|---|
+| vacío | **Automático** (recomendado) | Corre en cualquier centro que esté en `centros.ts`. Si no está: *"El POS está en CENTRO 004-118 y no hay datos de prueba para ese centro. Centros soportados: 004-150, 004-112…"* |
+| `004-150` | **Estricto** | Exige ese centro. Si el POS muestra otro: *"El POS está en CENTRO 004-112 y la suite espera 004-150…"* |
+
+**Agregar un centro nuevo:** un bloque en `tests/fixtures/centros.ts` con sus SKUs (y si aplica `vigente` de la oferta), más sus variables `E2E_<centro>_*` en `.env` y `.env.example`. Las cédulas y cupones van en el `.env`, nunca en `centros.ts` (son datos de clientes reales).
 
 > El `.env` también tiene que existir en el servidor `pos4-dev` si se corre allá. `sync.ps1` lo copia por SSH junto con el resto del proyecto.
 
@@ -115,10 +137,10 @@ npm run report                    # ver reporte HTML con videos y traces
 
 - **No necesitas `sync.ps1` para correr en local**: el código que se ejecuta es tu código local, interactuando con el POS y la base de datos del servidor.
 - **Si los túneles se caen** (suspensión de la PC, cambio de red), el test falla en el login. Verifica con los `curl` del paso 2. Si al reabrir dice *"Address already in use"*, mata los procesos en PowerShell con `Get-Process ssh | Stop-Process` y vuelve a abrirlos.
-- **NUNCA corras al mismo tiempo en local y en el servidor.** Comparten la misma caja `004-150` y se pisan los carritos y los pagos.
+- **NUNCA corras al mismo tiempo en local y en el servidor** si ambos caen en la misma caja: se pisan los carritos y los pagos.
 - **`npm test` y `npm run test:headed` usan modo serial** (se detienen en el primer fallo). Si el Caso 2 falla, los siguientes no se ejecutan. Para ver los 7, córrelos uno por uno con `npm run test:casoN`.
 - **Son transacciones reales:** cada corrida mueve stock y el Caso 5 consume cupo de crédito.
-- **La suite está armada para el centro `004-150`.** El centro lo asigna el POS según la IP de la máquina; si te asigna otro (p.ej. `004-112`), `globalSetup` se detiene con *"El POS está en CENTRO 004-112 y la suite espera 004-150"*. Pide que reasignen la caja o, si el cambio es definitivo, ajusta `E2E_CENTRO_ESPERADO` y el `SKU_POOL`.
+- **El centro lo asigna el POS según la IP de la máquina** (hoy tu PC puede caer en `004-112` y el servidor en `004-150`). En modo automático la suite se adapta sola; ver [Gestión de entornos](#gestión-de-entornos-centros).
 - Necesitas tu propio `.env` en la máquina local (ver [Configuración de credenciales](#configuración-de-credenciales-env)).
 
 ## Estructura (Page Object Model)
@@ -191,7 +213,7 @@ Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`)
 
 - **D-01** Voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*; en 1.13.0 es un aviso efímero).
 - **D-02** Suspensión sin feedback visible al usuario.
-- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 sí hay cédulas con cupo dentro de `E2E_CEDULA_POOL`; el Caso 5 busca la primera utilizable).
+- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 hay cédulas con cupo en `E2E_004_150_CREDITO`; el Caso 5 busca la primera utilizable).
 - **D-04** Autorización repetitiva.
 - **D-05** Código de oferta no visible en cobro.
 - ~~**D-06**~~ Falso positivo: no era falta de stock sino `fill()` sobre contadores `p-inputnumber`.

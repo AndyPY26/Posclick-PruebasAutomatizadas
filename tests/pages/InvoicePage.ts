@@ -1,6 +1,6 @@
 import { Page, expect, Locator } from '@playwright/test';
 import type { ItemCarrito } from '../fixtures/dataset';
-import { generarImei, montoDe, SKU_POOL } from '../fixtures/dataset';
+import { generarImei, montoDe, skuPool } from '../fixtures/dataset';
 import { PersonSearchComponent } from './components/PersonSearchComponent';
 import { CargarFacturaDialog } from './CargarFacturaDialog';
 import { SuspendedTxDialog } from './SuspendedTxDialog';
@@ -209,7 +209,7 @@ export class InvoicePage {
     if (cargados.length === 0) {
       throw new Error(
         'Ningún SKU del carrito pudo agregarse. Verifica que el pool tenga ' +
-          'SKUs válidos para el centro del POS. SKUs probados: ' +
+          'SKUs válidos para el centro del POS (tests/fixtures/centros.ts). SKUs probados: ' +
           items.map((i) => i.sku).join(', '),
       );
     }
@@ -240,7 +240,7 @@ export class InvoicePage {
    * Útil para esquivar el límite de $2,000 por pago en efectivo (D-07).
    */
   async cargarCarritoConTope(minTotal: number, maxTotal: number, maxIntentos = 40): Promise<string[]> {
-    const pool = [...SKU_POOL].sort(() => Math.random() - 0.5).slice(0, maxIntentos);
+    const pool = [...skuPool()].sort(() => Math.random() - 0.5).slice(0, maxIntentos);
     const cargados: string[] = [];
     for (const sku of pool) {
       if ((await this.leerTotal()) >= minTotal) break;

@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures/pos.fixture';
 import {
-  CREDENCIALES,
+  cajaActual,
+  datosCaja,
   generarCarrito,
   tomarCedulas,
   montoDe,
@@ -111,13 +112,15 @@ test('Caso 1: solo se permite una transacción suspendida y su recuperación es 
 });
 
 /* ==========================================================================
- * CASO 2 — Proforma de Oferta Especial (E2E_OFERTA_*) y conversión a factura
+ * CASO 2 — Proforma de Oferta Especial (oferta del centro, centros.ts) y conversión a factura
  * ========================================================================*/
 test('Caso 2: la proforma de oferta especial conserva cliente, ítems y beneficio al facturar', async ({
   pos,
 }) => {
+  const oferta = datosCaja().oferta;
+  test.skip(!oferta?.vigente, `Saltado: el CENTRO ${cajaActual()} no tiene una oferta especial vigente configurada.`);
   const { invoice, page } = pos;
-  const { cedula, cupon } = CREDENCIALES.ofertaEspecial;
+  const { cedula, cupon } = oferta!;
 
   // 1. Abrir el buscador de documentos y pasar a "Oferta Especial".
   const cargar = await invoice.abrirCargarFactura();
@@ -250,6 +253,10 @@ test('Caso 4: la autorización de supervisor con lector de tarjeta habilita la o
  * Requiere una cédula con tarjeta NO bloqueada y cupo suficiente.
  * ========================================================================*/
 test('Caso 5: la simulación de cuotas coincide con el documento emitido', async ({ pos }) => {
+  test.skip(
+    datosCaja().credito.length === 0,
+    `Saltado: el CENTRO ${cajaActual()} no tiene cédulas con cupo de crédito configuradas.`,
+  );
   const { invoice, page } = pos;
 
   console.log('[Caso5] 1/10 → cargar carrito aleatorio');
@@ -405,7 +412,7 @@ test('Caso 7: venta con entrega futura y pago en efectivo', async ({ pos }) => {
  * ==========================================================================*/
 
 /**
- * Recorre el pool buscando una tarjeta seleccionable (sin p-disabled/candado).
+ * Recorre las cédulas con crédito del centro buscando una tarjeta seleccionable (sin p-disabled/candado).
  * Devuelve null si ninguna sirve, para que el test falle con mensaje accionable.
  *
  * Vive en el spec porque es lógica de setup del caso, no de la Page: cambia la
@@ -414,7 +421,7 @@ test('Caso 7: venta con entrega futura y pago en efectivo', async ({ pos }) => {
 async function buscarCedulaConCreditoUtilizable(
   credito: CreditoPyccaForm,
 ): Promise<string | null> {
-  for (const cedula of tomarCedulas(10)) {
+  for (const cedula of [...datosCaja().credito].sort(() => Math.random() - 0.5)) {
     await credito.setCedula(cedula);
     await credito.abrirTarjetaDropdown();
     const { hayTarjeta, bloqueada } = await credito.primeraTarjetaBloqueada();
