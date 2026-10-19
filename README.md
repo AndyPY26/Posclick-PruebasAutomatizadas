@@ -1,6 +1,6 @@
 # Suite E2E POSCLICK
 
-Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://playwright.dev/) + planes de prueba de TestSprite. Cubre 7 flujos del POS (suspensión de ventas, ofertas especiales, independencia de clientes, autorización de supervisor, cuotas de crédito, venta en efectivo y entrega futura).
+Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://playwright.dev/). Cubre 7 flujos del POS (suspensión de ventas, ofertas especiales, independencia de clientes, autorización de supervisor, cuotas de crédito, venta en efectivo y entrega futura).
 
 - **App bajo prueba:** `http://localhost:4200`
 - **FE/BE:** `1.13.0` / `1.13.0` (verificado 2026-10-16)
@@ -86,7 +86,6 @@ e2e/
 │       ├── PrintHistoryPage.ts
 │       └── components/
 │           └── PersonSearchComponent.ts  # usado por Invoice y Delivery
-├── testsprite-plans/           # planes JSON de TestSprite por caso
 └── evidencias/                 # video, trace, screenshots, HTML report (generado)
 ```
 

@@ -2,7 +2,7 @@
   "name": "posclick-e2e",
   "version": "1.0.0",
   "private": true,
-  "description": "Suite E2E POSCLICK (Playwright) + planes TestSprite",
+  "description": "Suite E2E POSCLICK (Playwright)",
   "scripts": {
     "clean": "node -e \"const fs = require('fs'); fs.rmSync('evidencias/test-results', { recursive: true, force: true }); fs.rmSync('evidencias/html-report', { recursive: true, force: true }); if (fs.existsSync('evidencias')) fs.readdirSync('evidencias').filter((f) => f.endsWith('.png')).forEach((f) => fs.rmSync('evidencias/' + f)); fs.mkdirSync('evidencias/test-results', { recursive: true });\"",
     "pretest": "npm run clean",
