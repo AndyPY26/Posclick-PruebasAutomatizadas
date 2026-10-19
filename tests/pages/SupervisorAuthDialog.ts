@@ -29,7 +29,15 @@ export class SupervisorAuthDialog {
     await this.page.waitForTimeout(1_000);
     await this.inputClave.fill(CREDENCIALES.supervisor.clave);
     await this.page.waitForTimeout(300);
-    await this.confirmar.first().click();
+    // Si un lib-custom-modal (ej. "Entregas de caja pendientes") quedó encima,
+    // ciérralo primero: su único botón de acción reinyecta la vista y lo cierra.
+    const avisoBtn = this.page.locator('lib-custom-modal button').first();
+    if (await avisoBtn.isVisible().catch(() => false)) {
+      await avisoBtn.click().catch(() => undefined);
+      await this.page.waitForTimeout(1_000);
+    }
+    // force: fallback por si la overlay de PrimeNG aún intercepta pointer events.
+    await this.confirmar.first().click({ force: true });
     await this.page.waitForTimeout(3_000);
   }
 }

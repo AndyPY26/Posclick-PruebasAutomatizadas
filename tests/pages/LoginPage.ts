@@ -10,17 +10,18 @@ import { CREDENCIALES } from '../fixtures/dataset';
 export class LoginPage {
   constructor(private readonly page: Page) {}
 
-  private readonly botonSSO = this.page.locator('text=Iniciar Sesión con Microsoft');
+  private readonly botonSSO = this.page.getByRole('button', { name: /Iniciar Sesi[oó]n con Microsoft/i });
   private readonly msEmail = this.page.locator('input[type=email]');
-  private readonly msNext = this.page.locator('text=Next');
+  private readonly msNext = this.page.getByRole('button', { name: /^Next$|^Siguiente$/i });
   private readonly msPassword = this.page.locator('input[type=password]');
-  private readonly msSignIn = this.page.locator('text=Sign in');
-  private readonly msStaySignedIn = this.page.locator('text=Yes');
+  private readonly msSignIn = this.page.getByRole('button', { name: /^Sign in$|^Iniciar sesi[oó]n$/i });
+  private readonly msStaySignedIn = this.page.getByRole('button', { name: /^Yes$|^S[ií]$/i });
   /** El dashboard se considera listo cuando el primer "IR" (Facturación) es visible. */
-  private readonly dashboardReady = this.page.locator('text=IR >> nth=0');
+  private readonly dashboardReady = this.page.locator('button:has-text("IR")').first();
 
   async loginSSO(): Promise<void> {
-    await this.page.goto('/login', { waitUntil: 'load' });
+    await this.page.goto('/login', { waitUntil: 'networkidle' });
+    await this.botonSSO.first().waitFor({ state: 'visible', timeout: 60_000 });
     await this.botonSSO.first().click();
     await this.msEmail.first().waitFor({ state: 'visible' });
     await this.msEmail.first().fill(CREDENCIALES.sso.email);

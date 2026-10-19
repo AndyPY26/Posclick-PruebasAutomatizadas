@@ -5,7 +5,8 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Requisitos cubiertos:
  *  - Ejecución estrictamente secuencial (fullyParallel: false, workers: 1)
- *  - Evidencias (video + trace + screenshots) en ./evidencias/
+ *  - Evidencias en ./evidencias/: video de cada prueba (pase o falle);
+ *    trace y screenshot automático solo cuando falla.
  *  - Sin reintentos: cada caso toca datos reales del POS, un reintento
  *    automático generaría transacciones duplicadas.
  */
@@ -29,7 +30,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4200',
     video: 'on',
-    trace: 'on',
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     actionTimeout: 20_000,
     navigationTimeout: 60_000,

@@ -31,3 +31,12 @@ Thumbs.db
 *.tsbuildinfo
 dist/
 build/
+
+# Archivos ad-hoc de diagnóstico (scraping / inspección manual)
+scripts/
+NUL
+*.err
+*.png
+*.html
+scrape-*.json
+caso*-fail*.png

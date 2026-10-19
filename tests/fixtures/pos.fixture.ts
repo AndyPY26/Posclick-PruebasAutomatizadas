@@ -46,8 +46,8 @@ export const test = base.extend<Fixtures>({
     const login = new LoginPage(page);
     await login.loginSSO();
     const dashboard = new DashboardPage(page);
-    // Sin esto, Facturación responde "Acceso denegado: tiene entregas de caja pendientes".
-    await dashboard.liberarEntregasCajaPendientes();
+    // Sin apertura de caja, Facturación responde "Acceso denegado".
+    await dashboard.asegurarCajaAbierta();
     const invoice = await dashboard.irAFacturacion();
     await use({ page, dashboard, invoice });
   },

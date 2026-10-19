@@ -21,7 +21,7 @@ App: `http://localhost:4200` · FE `1.13.0` / BE `1.13.0` (verificado 2026-10-16
 
 ```
 e2e/
-├── playwright.config.ts   # workers:1, retries:0, video+trace 'on', globalSetup
+├── playwright.config.ts   # workers:1, retries:0, video 'on', trace 'retain-on-failure', globalSetup
 ├── global-setup.ts        # libera entregas de caja pendientes
 ├── tsconfig.json
 ├── package.json

@@ -62,7 +62,7 @@ npx playwright show-trace evidencias/test-results/**/trace.zip
 
 ```
 e2e/
-├── playwright.config.ts        # workers:1, retries:0, video+trace 'on', globalSetup
+├── playwright.config.ts        # workers:1, retries:0, video 'on', trace 'retain-on-failure', globalSetup
 ├── global-setup.ts             # libera entregas de caja pendientes
 ├── tsconfig.json
 ├── package.json
@@ -254,8 +254,12 @@ Te abre un navegador que graba tus clicks y genera selectores automáticamente. 
 
 Cada corrida genera en `./evidencias/`:
 
-- `html-report/` — reporte HTML navegable (`npm run report`)
-- `test-results/` — videos, traces y screenshots por caso
-- `resultados.json` — reporte JSON consolidado
+- `test-results/<caso>/video.webm` — **video de cada prueba, pase o falle** (`video: 'on'`).
+- `test-results/<caso>/trace.zip` y `test-failed-1.png` — trace y screenshot automático, **solo cuando la prueba falla** (`trace: 'retain-on-failure'`, `screenshot: 'only-on-failure'`).
+- `evidencias/casoN-*.png` — capturas de pasos que toma el propio spec con `evidencia()`; se generan siempre.
+- `html-report/` — reporte HTML navegable con los videos adjuntos (`npm run report`).
+- `resultados.json` — reporte JSON consolidado.
+
+> Cada `npm test` / `npm run test:casoN` ejecuta primero `clean` (también disponible como `npm run clean`), que **borra todas las evidencias de la corrida anterior**: `test-results/` (videos, traces), `html-report/` y las capturas `evidencias/*.png`. Así `evidencias/` siempre refleja solo la última corrida. Si necesitas conservar algo, cópialo fuera de `evidencias/` antes de volver a correr.
 
 Este directorio está en `.gitignore` y no se versiona.
