@@ -50,7 +50,7 @@ test('Caso 1: solo se permite una transacción suspendida y su recuperación es 
 
   console.log('[Caso1] 1/9 → cargar carrito A');
   const carritoA: ItemCarrito[] = generarCarrito();
-  await invoice.cargarCarrito(carritoA);
+  const cargadosA = await invoice.cargarCarrito(carritoA);
 
   console.log('[Caso1] 2/9 → suspender transacción A');
   await invoice.suspender();
@@ -74,10 +74,21 @@ test('Caso 1: solo se permite una transacción suspendida y su recuperación es 
   await suspendidas.recuperar();
 
   console.log('[Caso1] 7/9 → verificar SKUs recuperados');
-  for (const { sku } of carritoA) {
-    await expect(page.locator(`text=${sku}`).first()).toBeVisible();
-  }
-  for (const { sku } of carritoB.filter((b) => !carritoA.some((a) => a.sku === b.sku))) {
+  // Solo se exigen los SKUs que realmente entraron al carrito A; el mensaje
+  // lista todos los que se perdieron al recuperar, no solo el primero.
+  await expect
+    .poll(
+      async () => {
+        const perdidos: string[] = [];
+        for (const sku of cargadosA) {
+          if (!(await page.locator(`text=${sku}`).first().isVisible().catch(() => false))) perdidos.push(sku);
+        }
+        return perdidos;
+      },
+      { message: 'SKUs del carrito A perdidos al recuperar la suspendida', timeout: 15_000 },
+    )
+    .toEqual([]);
+  for (const { sku } of carritoB.filter((b) => !cargadosA.includes(b.sku))) {
     await expect(page.locator(`text=${sku}`)).toHaveCount(0);
   }
   await evidencia(page, 'caso1-02-transaccion-recuperada');
@@ -100,7 +111,7 @@ test('Caso 1: solo se permite una transacción suspendida y su recuperación es 
 });
 
 /* ==========================================================================
- * CASO 2 — Proforma de Oferta Especial (H0867) y conversión a factura
+ * CASO 2 — Proforma de Oferta Especial (E2E_OFERTA_*) y conversión a factura
  * ========================================================================*/
 test('Caso 2: la proforma de oferta especial conserva cliente, ítems y beneficio al facturar', async ({
   pos,

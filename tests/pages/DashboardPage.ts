@@ -168,7 +168,32 @@ export class DashboardPage {
     }
     throw new Error(
       'Caja no quedó abierta tras 5 intentos de Apertura. ' +
-        'Verifica manualmente el estado del POS 004-112.',
+        'Verifica manualmente el estado del POS.',
     );
+  }
+
+  /** Centro que muestra el encabezado del POS ("CENTRO 004-150" → "004-150"). */
+  async leerCentro(): Promise<string | null> {
+    const texto = await this.page
+      .getByText(/CENTRO\s+\d{3}-\d{3}/)
+      .first()
+      .innerText({ timeout: 15_000 })
+      .catch(() => '');
+    return texto.match(/\d{3}-\d{3}/)?.[0] ?? null;
+  }
+
+  /**
+   * Falla rápido si el POS no está en el centro para el que se armó el dataset
+   * (SKU_POOL, cédulas, oferta). Un centro distinto produce fallas engañosas
+   * (SKUs inexistentes, productos que se pierden al recuperar una suspendida).
+   */
+  async asegurarCentroEsperado(esperado: string): Promise<void> {
+    const actual = await this.leerCentro();
+    if (actual !== esperado) {
+      throw new Error(
+        `El POS está en CENTRO ${actual ?? '(no detectado)'} y la suite espera ${esperado}. ` +
+          'Revisa la caja asignada a esta IP o ajusta E2E_CENTRO_ESPERADO en el .env.',
+      );
+    }
   }
 }

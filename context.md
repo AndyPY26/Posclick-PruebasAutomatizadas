@@ -69,14 +69,18 @@ npx playwright show-trace evidencias/test-results/**/trace.zip
 
 ## Datos de prueba
 
-| Dato | Valor |
-|---|---|
-| SSO | `desarrollopy@pycca.com` / `cdPY2027!*` |
-| Supervisor (trama lector) | `%21310300;432940;JAIME GABRIEL HURTADO ALVAREZ` + Enter |
-| Clave supervisor | `1979` |
-| Código vendedor | `41602` |
-| Oferta Especial | `CREDENCIALES.ofertaEspecial` = `BG961` + `1709231169`. **Vencido en 004-150** (404). El anterior `H0867` + `0914848171` también da 404 |
-| Crédito con cupo (verificado 2026-10-16) | `1200573622` (cupo $3,400) y `0916633472` (cupo $2,521.58) |
+Los valores reales viven en `.env` (no versionado; plantilla en `.env.example`) y se leen desde `tests/fixtures/dataset.ts` (`CREDENCIALES`, `cedulaPool()`). **No escribir valores reales en este archivo.**
+
+| Dato | Variable de entorno | Nota |
+|---|---|---|
+| Centro | `E2E_CENTRO_ESPERADO` (def. `004-150`) | `globalSetup` lo compara con el encabezado `CENTRO xxx-xxx`. 2026-10-19: una corrida local cayó en `004-112` y el Caso 1 falló (Y05035 inexistente, 2 SKUs perdidos al recuperar la suspendida). Era el centro equivocado, no un defecto |
+| SSO | `E2E_SSO_EMAIL` / `E2E_SSO_PASSWORD` | Usuario de Azure AD de QA |
+| Supervisor (trama lector) | `E2E_SUPERVISOR_TRAMA` | Formato `%<tarjeta>;<id>;<NOMBRE>` + Enter |
+| Clave supervisor | `E2E_SUPERVISOR_CLAVE` | Entrega de caja, entrega futura, reimpresión |
+| Nombre supervisor | `E2E_SUPERVISOR_NOMBRE` | Opcional, por defecto el 3.er campo de la trama |
+| Código vendedor | `E2E_CODIGO_VENDEDOR` | — |
+| Oferta Especial | `E2E_OFERTA_CUPON` + `E2E_OFERTA_CEDULA` | La configurada al 2026-10-16 está **vencida en 004-150** (404); la anterior también |
+| Clientes de prueba | `E2E_CEDULA_POOL` | Cédulas separadas por coma; al 2026-10-16 al menos 3 tenían cupo de Crédito PYCCA (el Caso 5 busca la primera utilizable) |
 
 ## Selectores clave (ubicación en POM)
 
@@ -153,7 +157,7 @@ Estado final 2026-10-16 · FE 1.13.0 · caja 004-150 (cada caso corrido por sepa
 | Caso | Estado | Notas |
 |---|---|---|
 | 1 Suspensión única | ✅ | `SuspendedTxDialog` espera que cargue la tabla (antes contaba 0 radios) y su `modal` quedó acotado al `.p-dialog` |
-| 2 Oferta Especial | ❌ **datos** | `GET /api/offers/v1/special-offer` → 404 para `BG961`/`1709231169` y para `H0867`/`0914848171` ("Advertencia – No se encontraron datos."). UI y selectores OK |
+| 2 Oferta Especial | ❌ **datos** | `GET /api/offers/v1/special-offer` → 404 para la oferta configurada en `.env` y para la anterior ("Advertencia – No se encontraron datos."). UI y selectores OK |
 | 3 Independencia clientes | ✅ | Entrega futura con flujo +/Tab; carrito acotado (D-07); D-01 capturado como aviso efímero |
 | 4 Autorización supervisor | ✅ | — |
 | 5 Cuotas crédito | ✅ | `CreditoPyccaForm` reescrito (p-select por teclado, blur de "Valor a pagar", modales de datos de cliente y seguros); carrito de $500–$1,000 |

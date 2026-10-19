@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import dotenv from 'dotenv';
+
+// Carga credenciales y datos de prueba desde .env (ver .env.example). Se hace
+// aquí para que globalSetup y los workers los hereden en process.env.
+// quiet: dotenv >= 17 imprime un aviso en cada proceso (config + workers).
+dotenv.config({ quiet: true });
 
 /**
  * Configuración para la suite E2E de POSCLICK.

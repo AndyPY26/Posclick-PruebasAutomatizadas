@@ -157,10 +157,12 @@ export class InvoicePage {
    * Carga items resolviendo la "Info adicional" (IMEI) cuando el SKU la exige.
    *
    * Tolerante a SKUs del pool que no existen o no tienen stock en el centro:
-   * si tras presionar Enter la fila del SKU no aparece en 3s, logea y salta
-   * al siguiente item.
+   * si tras presionar Enter la fila del SKU no aparece en 3s, cierra el modal
+   * "Producto no encontrado", logea y salta al siguiente item.
+   *
+   * @returns los SKUs que sí quedaron en el carrito.
    */
-  async cargarCarrito(items: ItemCarrito[]): Promise<void> {
+  async cargarCarrito(items: ItemCarrito[]): Promise<string[]> {
     const cargados: string[] = [];
     const saltados: string[] = [];
     for (const { sku, cantidad } of items) {
@@ -187,6 +189,7 @@ export class InvoicePage {
         .catch(() => false);
       if (!filaOk) {
         console.log(`[InvoicePage.cargarCarrito] ⚠️ SKU=${sku} no se agregó al carrito (producto inexistente o sin stock) → skip`);
+        await this.cerrarProductoNoEncontrado();
         saltados.push(sku);
         continue;
       }
@@ -206,9 +209,21 @@ export class InvoicePage {
     if (cargados.length === 0) {
       throw new Error(
         'Ningún SKU del carrito pudo agregarse. Verifica que el pool tenga ' +
-          'SKUs válidos para el centro 004-112. SKUs probados: ' +
+          'SKUs válidos para el centro del POS. SKUs probados: ' +
           items.map((i) => i.sku).join(', '),
       );
+    }
+    return cargados;
+  }
+
+  /** Cierra el modal "Producto no encontrado" si quedó abierto tras un SKU inexistente. */
+  private async cerrarProductoNoEncontrado(): Promise<void> {
+    const modal = this.page.getByRole('dialog').filter({
+      has: this.page.getByRole('heading', { name: 'Producto no encontrado' }),
+    });
+    if (await modal.isVisible().catch(() => false)) {
+      await modal.getByRole('button', { name: 'Aceptar' }).click().catch(() => undefined);
+      await modal.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => undefined);
     }
   }
 

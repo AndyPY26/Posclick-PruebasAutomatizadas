@@ -10,13 +10,13 @@ Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://pla
 
 ## Requisitos
 
-- Node.js 18+
-- Acceso al POS corriendo localmente en `http://localhost:4200`
-- Credenciales SSO válidas de PYCCA
+- Node.js 20+
+- Acceso al POS en `http://localhost:4200` (en el servidor, o desde tu máquina con túneles SSH: ver [Flujo Diario](#ejecución-local-conectada-al-servidor-flujo-diario))
+- Archivo `.env` con credenciales SSO, autorización de supervisor y datos de prueba (ver [Configuración de credenciales](#configuración-de-credenciales-env))
 
 ## Reglas críticas de ejecución
 
-1. **El navegador debe correr en la misma máquina que la app.** El SSO de Azure AD usa `redirect_uri=http://localhost:4200`; con navegador remoto o túnel el retorno de sesión falla (~85%).
+1. **El POS debe verse como `http://localhost:4200` desde el navegador.** El SSO de Azure AD usa `redirect_uri=http://localhost:4200`; por eso se corre en el mismo servidor o con túneles SSH que mapean los puertos 4200 y 3000 a tu máquina (verificado, ver Flujo Diario). Apuntar a la IP del servidor rompe el retorno del login.
 2. **`retries: 0`.** Cada caso mueve stock, caja y cupo de crédito reales. Un reintento duplicaría transacciones.
 3. **Ejecución secuencial** (`fullyParallel: false`, `workers: 1`). La app mantiene estado global de caja.
 4. **Precondición obligatoria:** con entregas de caja pendientes, Facturación responde *"Acceso denegado"*. `global-setup.ts` las libera antes de la suite.
@@ -29,6 +29,32 @@ Suite de pruebas end-to-end para **POSCLICK** basada en [Playwright](https://pla
 npm install
 npx playwright install chromium
 ```
+
+### Configuración de credenciales (`.env`)
+
+Las credenciales y datos de prueba **no están en el código**: `tests/fixtures/dataset.ts` los lee de variables de entorno, y `playwright.config.ts` las carga desde un archivo `.env` (paquete `dotenv`). El `.env` **no se versiona** (está en `.gitignore`); la plantilla `.env.example` sí.
+
+```bash
+cp .env.example .env              # Linux / Git Bash
+Copy-Item .env.example .env       # PowerShell
+```
+
+Completa el `.env` con los valores reales (pídelos al equipo QA):
+
+| Variable | Para qué se usa | Obligatoria |
+|---|---|---|
+| `E2E_CENTRO_ESPERADO` | Centro POS para el que está armado el dataset; `globalSetup` detiene la suite si el POS muestra otro | No (por defecto `004-150`) |
+| `E2E_SSO_EMAIL`, `E2E_SSO_PASSWORD` | Login SSO de Azure AD | Sí |
+| `E2E_SUPERVISOR_TRAMA` | Trama del lector de tarjeta del supervisor (con `%` inicial) | Sí |
+| `E2E_SUPERVISOR_CLAVE` | Clave del supervisor (entrega de caja, entrega futura, reimpresión) | Sí |
+| `E2E_SUPERVISOR_NOMBRE` | Nombre del supervisor | No (se toma de la trama) |
+| `E2E_CODIGO_VENDEDOR` | Código de vendedor/asesor | Sí |
+| `E2E_OFERTA_CUPON`, `E2E_OFERTA_CEDULA` | Oferta especial vigente (Caso 2) | Solo Caso 2 |
+| `E2E_CEDULA_POOL` | Cédulas de clientes de prueba, separadas por coma (incluir algunas con cupo de crédito para el Caso 5) | Sí |
+
+Si falta una variable, el caso que la necesita falla con un mensaje explícito, por ejemplo: `Falta la variable E2E_SUPERVISOR_CLAVE en el .env. Copia .env.example a .env y complétala.`
+
+> El `.env` también tiene que existir en el servidor `pos4-dev` si se corre allá. `sync.ps1` lo copia por SSH junto con el resto del proyecto.
 
 Verificar que el POS responde:
 
@@ -45,8 +71,8 @@ npm run typecheck
 ## Ejecución
 
 ```bash
-npm test                 # corre los 5 casos
-npm run test:caso1       # un caso puntual (caso1 … caso5)
+npm test                 # corre los 7 casos (modo serial: se detiene en el primer fallo)
+npm run test:caso1       # un caso puntual (caso1 … caso7)
 npm run test:caso2
 npm run test:headed      # modo con UI
 npm run report           # abre el HTML report con videos y traces
@@ -58,6 +84,43 @@ Ver una traza específica:
 npx playwright show-trace evidencias/test-results/**/trace.zip
 ```
 
+## Ejecución local conectada al servidor (Flujo Diario)
+
+Un desarrollador o QA puede correr la suite **en su propia máquina** contra el POS de `pos4-dev`. El navegador corre en local y llega al POS a través de túneles SSH, que exponen el frontend (puerto 4200) y el backend (puerto 3000) como si estuvieran en `localhost`. El SSH solo se usa para los túneles: los comandos `npm` se ejecutan en la máquina local.
+
+### 1. Abrir los túneles (una vez por sesión)
+
+```bash
+ssh -fN -L 4200:localhost:4200 pos4-dev
+ssh -fN -L 3000:localhost:3000 pos4-dev
+```
+
+### 2. Verificar que responden (ambos deben dar código HTTP 200)
+
+```powershell
+curl.exe -s -o NUL -w "%{http_code}\n" http://localhost:4200/login
+curl.exe -s -o NUL -w "%{http_code}\n" http://localhost:3000/api/configuration/v1/pos
+```
+
+### 3. Ejecutar desde la raíz del proyecto local (ej. `C:\Users\achafla\Desktop\e2e`)
+
+```bash
+npm run test:caso6                # un caso, sin ventana (headless)
+npm run test:caso6 -- --headed    # un caso, viendo el navegador
+npm run test:headed               # los 7 casos, viendo el navegador
+npm run report                    # ver reporte HTML con videos y traces
+```
+
+### ⚠️ Consideraciones importantes
+
+- **No necesitas `sync.ps1` para correr en local**: el código que se ejecuta es tu código local, interactuando con el POS y la base de datos del servidor.
+- **Si los túneles se caen** (suspensión de la PC, cambio de red), el test falla en el login. Verifica con los `curl` del paso 2. Si al reabrir dice *"Address already in use"*, mata los procesos en PowerShell con `Get-Process ssh | Stop-Process` y vuelve a abrirlos.
+- **NUNCA corras al mismo tiempo en local y en el servidor.** Comparten la misma caja `004-150` y se pisan los carritos y los pagos.
+- **`npm test` y `npm run test:headed` usan modo serial** (se detienen en el primer fallo). Si el Caso 2 falla, los siguientes no se ejecutan. Para ver los 7, córrelos uno por uno con `npm run test:casoN`.
+- **Son transacciones reales:** cada corrida mueve stock y el Caso 5 consume cupo de crédito.
+- **La suite está armada para el centro `004-150`.** El centro lo asigna el POS según la IP de la máquina; si te asigna otro (p.ej. `004-112`), `globalSetup` se detiene con *"El POS está en CENTRO 004-112 y la suite espera 004-150"*. Pide que reasignen la caja o, si el cambio es definitivo, ajusta `E2E_CENTRO_ESPERADO` y el `SKU_POOL`.
+- Necesitas tu propio `.env` en la máquina local (ver [Configuración de credenciales](#configuración-de-credenciales-env)).
+
 ## Estructura (Page Object Model)
 
 ```
@@ -68,10 +131,12 @@ e2e/
 ├── package.json
 ├── context.md                  # RAG / notas internas de la suite
 ├── PLANTILLA-CASO-NUEVO.md     # prompt para generar casos nuevos con LLM
+├── .env.example                # plantilla de credenciales (copiar a .env, que no se versiona)
+├── sync.ps1 / sync.bat         # copia el proyecto al servidor pos4-dev por SSH
 ├── tests/
-│   ├── pos-flujos-avanzados.spec.ts  # 5 casos (solo intención de negocio)
+│   ├── pos-flujos-avanzados.spec.ts  # 7 casos (solo intención de negocio)
 │   ├── fixtures/
-│   │   ├── dataset.ts                # pools, credenciales, utilidades puras
+│   │   ├── dataset.ts                # SKU_POOL, credenciales desde .env, utilidades puras
 │   │   └── pos.fixture.ts            # test.extend con `pos`, loginPage, dashboardPage
 │   └── pages/                        # Page Object Model — una clase por pantalla
 │       ├── LoginPage.ts
@@ -97,7 +162,8 @@ Los tests NO tocan selectores. Expresan intención de negocio contra Pages:
 test('Caso 2: proforma oferta especial', async ({ pos }) => {
   const { invoice, page } = pos;
   const cargar = await invoice.abrirCargarFactura();
-  await cargar.cargarOfertaEspecial('H0867', '0914848171');
+  const { cupon, cedula } = CREDENCIALES.ofertaEspecial; // desde el .env
+  await cargar.cargarOfertaEspecial(cupon, cedula);
   const pay = await invoice.continuar();
   await pay.pagarEnEfectivo();
 });
@@ -125,7 +191,7 @@ Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`)
 
 - **D-01** Voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*; en 1.13.0 es un aviso efímero).
 - **D-02** Suspensión sin feedback visible al usuario.
-- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 sí hay cédulas con cupo: `1200573622`, `0916633472`, `2450681438`).
+- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 sí hay cédulas con cupo dentro de `E2E_CEDULA_POOL`; el Caso 5 busca la primera utilizable).
 - **D-04** Autorización repetitiva.
 - **D-05** Código de oferta no visible en cobro.
 - ~~**D-06**~~ Falso positivo: no era falta de stock sino `fill()` sobre contadores `p-inputnumber`.

@@ -51,28 +51,78 @@ export const SKU_POOL = [
   'Y10977', 'Y11126', 'Y12553', 'Y12566', 'Y12567', 'Y12570', 'Y12577', 'Y12578',
 ] as const;
 
-export const CEDULA_POOL = [
-  // Pool original
-  '0919522151', '2450681438', '0922154976', '0914880208', '0923022339', '0922350863',
-  '1200007126', '0925688160', '0928181148', '0923632020', '1205902859', '0916835226',
-  '0962366118', '1203874142', '0916381197', '0604473249', '1305717074', '0200875334',
-  '0905448874', '0914102827', '1200018669', '0918171810', '1300437223', '1311371452',
-  // CLUB PYCCA - CREDITO (nuevo lote con cupo real)
-  '1703164432', '0916558760', '1716034028', '0921414652', '0920798337', '0907970701',
-  '0920927928', '0916633472', '1200573622',
-] as const;
+/* ----------------------------------------------------------------------------
+ * Datos sensibles: se leen del `.env` (ver `.env.example`), nunca del código.
+ * `playwright.config.ts` carga el `.env` con dotenv antes de correr la suite.
+ * Las lecturas son perezosas (getters): una variable que falta solo rompe el
+ * caso que la usa, con un mensaje que dice exactamente qué agregar.
+ * --------------------------------------------------------------------------*/
+
+function envRequerida(nombre: string): string {
+  const valor = process.env[nombre]?.trim();
+  if (!valor) {
+    throw new Error(
+      `Falta la variable ${nombre} en el .env. Copia .env.example a .env y complétala.`,
+    );
+  }
+  return valor;
+}
+
+function envOpcional(nombre: string, porDefecto: string): string {
+  return process.env[nombre]?.trim() || porDefecto;
+}
+
+/** Cédulas de clientes de prueba (CLUB PYCCA), separadas por coma en E2E_CEDULA_POOL. */
+export function cedulaPool(): string[] {
+  const pool = envRequerida('E2E_CEDULA_POOL')
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (pool.length === 0) throw new Error('E2E_CEDULA_POOL no tiene cédulas.');
+  return pool;
+}
+
+/** Centro POS para el que está armado el dataset; globalSetup lo valida. */
+export function centroEsperado(): string {
+  return envOpcional('E2E_CENTRO_ESPERADO', '004-150');
+}
 
 export const CREDENCIALES = {
-  sso: { email: 'desarrollopy@pycca.com', password: 'cdPY2027!*' },
-  /** Trama tal como la emite el lector de banda magnética. */
-  supervisor: {
-    trama: '%21310300;432940;JAIME GABRIEL HURTADO ALVAREZ',
-    clave: '1979',
-    nombre: 'JAIME GABRIEL HURTADO ALVAREZ',
+  sso: {
+    get email() {
+      return envRequerida('E2E_SSO_EMAIL');
+    },
+    get password() {
+      return envRequerida('E2E_SSO_PASSWORD');
+    },
   },
-  codigoVendedor: '41602',
-  ofertaEspecial: { cedula: '1709231169', cupon: 'BG961' },
-} as const;
+  /** Autorización de supervisor (entrega de caja, entrega futura, reimpresión). */
+  supervisor: {
+    /** Trama tal como la emite el lector de banda magnética (con el `%` inicial). */
+    get trama() {
+      return envRequerida('E2E_SUPERVISOR_TRAMA');
+    },
+    get clave() {
+      return envRequerida('E2E_SUPERVISOR_CLAVE');
+    },
+    /** Por defecto, el tercer campo de la trama (`%tarjeta;id;NOMBRE`). */
+    get nombre() {
+      return envOpcional('E2E_SUPERVISOR_NOMBRE', this.trama.split(';')[2] ?? '');
+    },
+  },
+  get codigoVendedor() {
+    return envRequerida('E2E_CODIGO_VENDEDOR');
+  },
+  /** Solo la usa el Caso 2; si la oferta vence, basta actualizar el .env. */
+  ofertaEspecial: {
+    get cedula() {
+      return envRequerida('E2E_OFERTA_CEDULA');
+    },
+    get cupon() {
+      return envRequerida('E2E_OFERTA_CUPON');
+    },
+  },
+};
 
 export type ItemCarrito = { sku: string; cantidad: number };
 
@@ -86,7 +136,7 @@ export function generarCarrito(min = 10, max = 12): ItemCarrito[] {
 }
 
 export function tomarCedulas(n: number): string[] {
-  return [...CEDULA_POOL].sort(() => Math.random() - 0.5).slice(0, n);
+  return cedulaPool().sort(() => Math.random() - 0.5).slice(0, n);
 }
 
 export function generarImei(): string {
