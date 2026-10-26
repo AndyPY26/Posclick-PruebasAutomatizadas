@@ -165,6 +165,16 @@ export class DashboardPage {
       const apertura = new BoxOpeningPage(this.page);
       await apertura.esperarCargada();
       await apertura.aperturarCaja();
+      if (apertura.ultimoRechazo && /no ha sido entregada/i.test(apertura.ultimoRechazo)) {
+        // En 1.13.0 el FE mostraba "Entregas de caja pendientes" y resolverBloqueos()
+        // la procesaba. En FE pbd-9-sync-develop no aparece porque
+        // GET /pos/v1/daily-deposit-status responde 500 y la pantalla de Entrega
+        // queda sin fecha: no se procesa a ciegas.
+        throw new Error(
+          `El POS rechazó la apertura de caja: "${apertura.ultimoRechazo}". ` +
+            'Procesa esa entrega de caja (módulo Entrega de Caja + autorización de supervisor) y vuelve a correr la suite.',
+        );
+      }
     }
     throw new Error(
       'Caja no quedó abierta tras 5 intentos de Apertura. ' +

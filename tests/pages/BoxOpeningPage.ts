@@ -20,6 +20,9 @@ export class BoxOpeningPage {
   private readonly irEntregaBtn = this.page.locator('button:has-text("Ir a entrega de caja")');
   private readonly procesarBtn = this.page.locator('button:has-text("Procesar")');
 
+  /** Mensaje del último rechazo de `POST /pos/v1/open` (p.ej. entrega pendiente). */
+  ultimoRechazo: string | null = null;
+
   async esperarCargada(): Promise<void> {
     await this.page.waitForURL(/box-opening/, { timeout: 30_000 });
     await this.aperturarBtn.waitFor({ state: 'visible', timeout: 20_000 });
@@ -100,6 +103,10 @@ export class BoxOpeningPage {
    * El primer click después de llegar a /box-opening a veces no dispara la
    * petición HTTP (Angular aún binde-ando handlers). Reintentamos hasta ver
    * la respuesta real del backend o acabar los intentos.
+   *
+   * FE pbd-9-sync-develop (2026-10-26): el click primero ejecuta
+   * `POST /pos/v1/start-of-day/execute` y ~8s después llama a `/open`.
+   * Si `/open` responde 4xx, el mensaje queda en `ultimoRechazo`.
    */
   async aperturarCaja(): Promise<boolean> {
     await this.neutralizarOverlays();
@@ -113,7 +120,7 @@ export class BoxOpeningPage {
         .waitForResponse(
           (r) =>
             /\/api\/pos\/v1\/open$/.test(r.url()) && r.request().method() === 'POST',
-          { timeout: 10_000 },
+          { timeout: 30_000 },
         )
         .catch(() => null);
 
@@ -123,8 +130,15 @@ export class BoxOpeningPage {
 
       const resp = await respPromise;
       if (resp && resp.status() === 204) {
+        this.ultimoRechazo = null;
         await this.page.waitForTimeout(5_000);
         return true;
+      }
+      if (resp && resp.status() >= 400) {
+        const cuerpo = await resp.json().catch(() => ({}));
+        this.ultimoRechazo = String(cuerpo?.message ?? `HTTP ${resp.status()}`);
+        // Un rechazo de negocio no se arregla reintentando el click.
+        return false;
       }
       await this.page.waitForTimeout(2_500);
     }
