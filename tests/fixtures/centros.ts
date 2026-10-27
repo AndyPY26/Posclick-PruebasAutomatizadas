@@ -105,6 +105,10 @@ export const CENTROS_DATA: Record<string, DatosCentro> = {
     skus: [
       'M03781', 'M03762', 'O22977', 'O24144', 'L01477',
       'A01507', 'A01505', 'A01517', 'Y07484', 'Y10974',
+      // Cosechados con `npm run explorar:skus` el 2026-10-26 desde el pool de 004-150.
+      'O22652', 'O22654', 'O22655', 'O22657', 'O22955',
+      'O22976', 'O22978', 'O22979', 'O23546', 'O23553',
+      'O28268', 'O48324', 'O48357', 'O60832', 'O60854',
     ],
     get oferta() {
       return ofertaEnv('004-112', false);

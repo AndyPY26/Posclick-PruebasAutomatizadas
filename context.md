@@ -1,8 +1,9 @@
 # Context — Suite E2E POSCLICK
 
-App: `http://localhost:4200` · FE `1.13.0` / BE `1.13.0` (verificado 2026-10-16) · Caja `004-150`
+App: `http://localhost:4200` · FE `pbd-9-sync-develop` / BE `unknown` (verificado 2026-10-27) · Caja **detectada en cada corrida** (hoy `004-112` desde la PC local; `004-150` en corridas previas)
 
 > Historial: hasta 2026-10-15 era FE `1.12.0-rc.5` / BE `1.12.0-rc.3` en la caja `004-112`. Los selectores mapeados en rc.5 siguen vigentes en 1.13.0 salvo lo indicado en "Resumen de pago".
+> 2026-10-16: FE/BE `1.13.0` en la caja `004-150`. 2026-10-19 en adelante: FE `pbd-9-sync-develop`; el centro lo asigna el POS según la IP y cambia entre 004-150 y 004-112, por eso la suite es agnóstica al centro (ver "Datos de prueba").
 > Al cambiar de caja, un carrito abierto con la caja anterior falla con *"El id de la transacción no corresponde al posId/transaccionType"*: vaciarlo y empezar de nuevo.
 
 **Acceso desde Windows:** túnel SSH a `pos4-dev` con los dos puertos (frontend + backend):
@@ -16,20 +17,25 @@ App: `http://localhost:4200` · FE `1.13.0` / BE `1.13.0` (verificado 2026-10-16
 4. **Precondición obligatoria:** con entregas de caja pendientes, Facturación responde *"Acceso denegado"*. `global-setup.ts` las libera.
 5. **Las pruebas de crédito consumen cupo real** y no son repetibles sin reponerlo.
 6. **Mockear impresión** con `addInitScript` antes de navegar; sin impresora la app lanza *"Impresora no encontrada"* (ignorable).
+7. **Cédulas, cupones y credenciales solo en `.env`** (no versionado). En logs, las cédulas van enmascaradas (`******1234`).
+8. **Casos que dependen de datos del centro se saltan antes de los fixtures:** `test.describe(() => { test.skip(() => condición, motivo); test(...) })`. Un `test.skip` dentro del cuerpo corre después del fixture `pos` (login, caja) y puede fallar ahí aunque el caso debiera saltarse.
 
 ## Estructura (POM)
 
 ```
 e2e/
 ├── playwright.config.ts   # workers:1, retries:0, video 'on', trace 'retain-on-failure', globalSetup
-├── global-setup.ts        # libera entregas de caja pendientes
+├── global-setup.ts        # login, detecta el centro (CAJA_ACTUAL), abre la caja
 ├── tsconfig.json
 ├── package.json
 ├── tests/
 │   ├── pos-flujos-avanzados.spec.ts   # 7 casos (solo intención de negocio)
 │   ├── fixtures/
-│   │   ├── dataset.ts                 # pools, credenciales, utilidades puras
+│   │   ├── centros.ts                 # CENTROS_DATA: SKUs por centro; oferta y crédito desde .env
+│   │   ├── dataset.ts                 # datosCaja()/skuPool() del centro actual, credenciales, utilidades
 │   │   └── pos.fixture.ts             # test.extend con `pos`
+│   ├── utils/
+│   │   └── explorar-skus.spec.ts      # utilidad: busca SKUs válidos del centro (no es un caso)
 │   └── pages/                         # Page Object Model
 │       ├── LoginPage.ts
 │       ├── DashboardPage.ts
@@ -64,6 +70,7 @@ npm run test:caso2                  # uno (caso1…caso7)
 for c in 1 2 3 4 5 6 7; do npx playwright test -g "Caso $c:"; done
 npm run test:headed
 npm run report                      # HTML + videos + traces
+npm run explorar:skus               # utilidad: SKUs válidos para el centro actual → evidencias/skus-<centro>.json
 npx playwright show-trace evidencias/test-results/**/trace.zip
 ```
 
@@ -73,7 +80,7 @@ Los valores reales viven en `.env` (no versionado; plantilla en `.env.example`) 
 
 | Dato | Variable de entorno | Nota |
 |---|---|---|
-| Centro | `tests/fixtures/centros.ts` + `E2E_CENTRO_ESPERADO` (vacío = automático, valor = estricto) | `globalSetup` lee el encabezado `CENTRO xxx-xxx`, lo publica en `process.env.CAJA_ACTUAL` y `dataset.ts` (`datosCaja()`, `skuPool()`) entrega los datos de ese centro. 2026-10-19: una corrida local cayó en `004-112` y el Caso 1 falló con el pool de 004-150 (Y05035 inexistente; M03781 y Y10974 se perdieron al recuperar la suspendida) |
+| Centro | `tests/fixtures/centros.ts` + `E2E_CENTRO_ESPERADO` (vacío = automático, valor = estricto) | `globalSetup` lee el encabezado `CENTRO xxx-xxx`, lo publica en `process.env.CAJA_ACTUAL` y `dataset.ts` (`datosCaja()`, `skuPool()`) entrega los datos de ese centro. 2026-10-19: una corrida local cayó en `004-112` y el Caso 1 falló con el pool de 004-150 (Y05035 inexistente; M03781 y Y10974 se perdieron al recuperar la suspendida). 2026-10-26: el pool de 004-112 sumaba $749 (< $1,000 de los casos en efectivo); `npm run explorar:skus` cosechó 15 SKUs más desde el pool de 004-150 → 25 SKUs |
 | SSO | `E2E_SSO_EMAIL` / `E2E_SSO_PASSWORD` | Usuario de Azure AD de QA |
 | Supervisor (trama lector) | `E2E_SUPERVISOR_TRAMA` | Formato `%<tarjeta>;<id>;<NOMBRE>` + Enter |
 | Clave supervisor | `E2E_SUPERVISOR_CLAVE` | Entrega de caja, entrega futura, reimpresión |
@@ -81,7 +88,7 @@ Los valores reales viven en `.env` (no versionado; plantilla en `.env.example`) 
 | Código vendedor | `E2E_CODIGO_VENDEDOR` | — |
 | Oferta Especial | `E2E_<centro>_OFERTA_CUPON` + `_OFERTA_CEDULA`; `vigente` en `centros.ts` | No vigente → el Caso 2 se salta. BG961 **vencida en 004-150** (404 desde 2026-10-16); H0867 en 004-112 sin validar |
 | Clientes de prueba | `E2E_CEDULA_POOL` | Cédulas CLUB PYCCA separadas por coma (Casos 3, 5, 6, 7) |
-| Crédito PYCCA | `E2E_<centro>_CREDITO` | Cédulas con cupo en el centro; vacío → el Caso 5 se salta. 004-150: 3 cédulas con cupo confirmadas el 2026-10-16 |
+| Crédito PYCCA | `E2E_<centro>_CREDITO` | Cédulas con cupo en el centro; vacío → el Caso 5 se salta. El cupo es del cliente, no del centro: las 3 cédulas de 004-150 (confirmadas 2026-10-16) también tienen cupo en 004-112 (2026-10-26: $3,400 / $2,521.58 / $2,433.23) |
 
 ## Selectores clave (ubicación en POM)
 
@@ -109,6 +116,14 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 | `#mf_pay_recorded_payments_table_row_0_amount` (monto del pago registrado) | `PaymentPage.ts` (`CreditoPyccaForm`) |
 | `table:has-text("Tienda Destino")` (tiendas con inventario) + `.p-inputnumber-increment-button` | `DeliveryPage.ts` |
 | `#mf_sale_invoice_finder_invoice_document_type_select` (toggle Post Venta / Oferta Especial), `[id="button_invoice-finder.find-button"]` | `CargarFacturaDialog.ts` |
+| `#mf_sale_product_list_table_quantity_${sku} input` (cantidad en el carrito; `fill` + Tab sí recalcula el total) | `InvoicePage.ts` |
+| `getByRole('dialog').filter({ hasText: título })` (modales "Actualización de datos…", "Captaciones de seguros") | `PaymentPage.ts` (`cerrarModalSiAplica`) |
+| `getByRole('dialog')` + heading "No se pudo generar la transacción", `getByText('Fuera de línea')` | `InvoicePage.ts` (`continuar`) |
+| `button[aria-label="Elige fecha"]`, `span.p-datepicker-day:not(.p-disabled)`, `.p-datepicker-next-button` | `DeliveryPage.ts` (`elegirFechaEntrega`) |
+| `#loader-custom-description` ("Por favor, espere..."), botón "Iniciar Sesión Local" | `LoginPage.ts` (`clickBotonSSO`) |
+| `button:has-text("Aperturar caja")` + respuesta de `POST /api/pos/v1/open` (motivo del rechazo) | `BoxOpeningPage.ts` |
+| `#mf_posop_box_delivery_*` (entrega de caja) | `BoxDeliveryPage.ts` |
+| Mapeados en exploración, **aún no en el POM**: `#mf_posop_box_opening_button button` (id estable para "Aperturar caja"), `#mf_posop_cash_reserves_modal_button_cancel` / `_cash_reserves` (modal "Fondos de efectivo"), `#mf_ap_update` ("Actualizar configuraciones"), `#mf_shared_online` | — |
 
 ## Trucos no obvios
 
@@ -151,9 +166,33 @@ En `/pos-ui/invoice` el resumen sí tiene ids: `#mf_sale_discount_value`, `#mf_s
 - **Dashboard rc.5:** 16 módulos (nuevos: Abonos y Crédito Pycca, Cambio y devolución, Reverso de Abono). Los `nth` usados (0,3,4,8) siguen valiendo por casualidad.
 - **"Factura en curso":** si un run aborta con carrito abierto, el dashboard bloquea Apertura con ese modal. Ir a Facturación → Regresar → "Sí, eliminar".
 
+### FE `pbd-9-sync-develop` (2026-10-19 → 27)
+
+- **Modales sin `.p-dialog`:** varios modales (p.ej. "Actualización de datos clientes club Pycca", "Fondos de efectivo") tienen contenedor `modal_dialog_id_*` (id dinámico) y no se detectan con `.p-dialog`. Ubicarlos por `getByRole('dialog')` + título. Con `.p-dialog`, el Caso 5 dejaba el modal abierto y el pago registrado nunca aparecía.
+- **No hay `data-testid`** en ninguna pantalla. Botones del encabezado (☰, historial de errores, campana, tema) comparten `id="button_null"` y no tienen `aria-label`: solo se ubican por la clase del ícono (`button:has(.pi-bars)`, `button:has(.pi-exclamation-circle)`).
+- **Apertura de caja:** "Aperturar caja" dispara `POST /pos/v1/start-of-day/execute` y ~8 s después `POST /pos/v1/open`. Un rechazo (400) **no muestra modal ni toast**, solo suma al contador del historial de errores: leer el motivo de la respuesta de `/open` (`BoxOpeningPage.ultimoRechazo`). Ej.: *"Caja tiene transacciones en la fecha 2026-10-23 y no ha sido entregada."*
+- **Entrega de caja:** al entrar sale el modal "Fondos de efectivo" (Cancelar / Aplicar). La Fecha (`#mf_posop_box_delivery_date`) está deshabilitada y la llena `GET /pos/v1/daily-deposit-status`; si ese endpoint da 500 (2026-10-23: `sp_pos_bitacoracaja_SELECT_FECHA_ENTREGA` esperaba 3 argumentos), no hay forma de procesar la entrega desde la UI (`daily-deposit` → 400 *"The Date field is required."*).
+- **Conexión intermitente del POS:** `configuration/v1/connection-status → 500` pone el encabezado en "Fuera de línea". Efectos vistos el 2026-10-26: (a) en `/login` el POS reemplaza "Iniciar Sesión con Microsoft" por **"Iniciar Sesión Local"**; (b) al pulsar Continuar, `POST sales/v1/transaction → 500` y modal **"No se pudo generar la transacción"** (la transacción no queda registrada: se puede reintentar). La suite recarga / espera hasta 90 s y reintenta; si persiste, falla con el motivo.
+- **Login Microsoft:** a veces el campo de contraseña se vacía mientras carga "Enter password" y Microsoft responde *"Please enter your password"*. `LoginPage.ingresarPassword()` espera 1 s, verifica el valor y reintenta (3 veces). Nunca loguear el valor.
+- **Calendario de entrega futura:** el click en "Elige fecha" a veces no despliega el panel (no llega al DOM). `DeliveryPage.elegirFechaEntrega()` reintenta y, si el mes no tiene días habilitados, avanza un mes.
+- **Carrito con tope:** `cargarCarritoConTope(min, max)` agrega SKUs de a 1 y, si el pool se agota bajo el mínimo, sube la cantidad de un artículo ya cargado (del último hacia atrás) calculando las unidades con su precio unitario, sin pasar el tope. Verificado: 10 SKUs de 004-112 ($749.69) → `Y10974 x23` → $1,002.69. Devuelve `ItemCarrito[]` con cantidades (lo usa la entrega futura).
+- **"Target page, context or browser has been closed"** a los ~2 s de arrancar = se cerró la ventana de Chromium (típico en `--headed`), no es un fallo de la suite.
+
 ## Estado conocido
 
-Estado final 2026-10-16 · FE 1.13.0 · caja 004-150 (cada caso corrido por separado en `pos4-dev`):
+Estado 2026-10-27 · FE `pbd-9-sync-develop` · caja **004-112** (PC local, cada caso por separado y suite completa sin el Caso 2):
+
+| Caso | Estado | Notas |
+|---|---|---|
+| 1 Suspensión única | ✅ | — |
+| 2 Oferta Especial | ⏭ | Se salta: `E2E_004_112_OFERTA_*` no vigente (H0867 sin validar) |
+| 3 Independencia clientes | ✅ | Carrito $1,185–$1,382 con el pool de 25 SKUs |
+| 4 Autorización supervisor | ✅ | — |
+| 5 Cuotas crédito | ✅ | Revisa todas las cédulas y usa la de mayor cupo; modales por rol (ver FE `pbd-9-sync-develop`) |
+| 6 Venta efectivo + cliente | ✅ | — |
+| 7 Venta entrega futura efectivo | ✅ | Falló una vez por "Fuera de línea" (entorno) y otra por el calendario; ambos con reintento |
+
+Estado 2026-10-16 · FE 1.13.0 · caja 004-150 (cada caso corrido por separado en `pos4-dev`):
 
 | Caso | Estado | Notas |
 |---|---|---|
@@ -167,6 +206,6 @@ Estado final 2026-10-16 · FE 1.13.0 · caja 004-150 (cada caso corrido por sepa
 
 **Defectos:** D-01 voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*, aviso efímero en 1.13.0; el backend responde 200 a `/receipt/v1/reprint` y `/generatereceipts`) · D-02 suspensión sin feedback · D-03 créditos de prueba bloqueados/sobregirados · D-04 autorización repetitiva · D-05 código de oferta no visible en cobro · ~~D-06~~ **falso positivo** (2026-10-16): el POM llenaba los contadores con `fill()` y nunca consultaba inventario; en 004-150 sí hay stock de entrega (p.ej. M03493 en 21 tiendas, O22652 en 16) · D-07 con carrito > $2,000 en efectivo, el primer pago de $2,000 se registra pero los siguientes "Agregar" no (el botón se ve habilitado). Pendiente confirmar con FE la regla de pago dividido.
 
-**Dataset ampliado (2026-10):** `SKU_POOL` crece de 32 → ~290 (familias O, D, M, L, A, Y). `CEDULA_POOL` crece de 24 → 33 incluyendo lote CLUB PYCCA - CREDITO con cédulas reales de clientes con tarjeta de crédito activa.
+**Dataset ampliado (2026-10):** el pool de SKUs de 004-150 crece de 32 → ~290 (familias O, D, M, L, A, Y; hoy en `centros.ts`). 004-112 tiene 25 (10 de la corrida del 2026-10-19 + 15 cosechados el 2026-10-26). `E2E_CEDULA_POOL` crece de 24 → 33 incluyendo lote CLUB PYCCA - CREDITO con cédulas reales de clientes con tarjeta de crédito activa.
 
 **No verificable aquí:** contenido de documentos impresos (sin impresora ni preview).

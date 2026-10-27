@@ -424,29 +424,20 @@ export class CreditoPyccaForm {
     await this.clickOpcion(idx);
   }
 
-  /** Cierra un modal por título haciendo click DOM en el botón indicado. */
+  /** Cierra un modal por título con el botón indicado (click real; JS si algo lo tapa). */
   private async cerrarModalSiAplica(titulo: RegExp, boton: RegExp, timeout: number): Promise<boolean> {
-    const visible = await this.page
-      .locator('.p-dialog')
-      .filter({ hasText: titulo })
-      .first()
+    // Por rol + texto: en FE pbd-9-sync-develop estos modales ya no usan .p-dialog
+    // (host con id dinámico modal_dialog_id_*), visto el 2026-10-26.
+    const modal = this.page.getByRole('dialog').filter({ hasText: titulo }).first();
+    const visible = await modal
       .waitFor({ state: 'visible', timeout })
       .then(() => true)
       .catch(() => false);
     if (!visible) return false;
-    await this.page.evaluate(
-      ({ t, b }) => {
-        const d = Array.from(document.querySelectorAll('.p-dialog')).find((x) =>
-          new RegExp(t, 'i').test(x.textContent || ''),
-        );
-        const btn = Array.from(d?.querySelectorAll('button') ?? []).find((x) =>
-          new RegExp(b, 'i').test((x.textContent || '').trim()),
-        ) as HTMLButtonElement | undefined;
-        btn?.click();
-      },
-      { t: titulo.source, b: boton.source },
-    );
-    await this.page.waitForTimeout(2_000);
+    const btn = modal.getByRole('button', { name: boton }).first();
+    await btn.click({ timeout: 5_000 }).catch(() => btn.evaluate((el: HTMLElement) => el.click()));
+    await modal.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => undefined);
+    await this.page.waitForTimeout(1_000);
     return true;
   }
 
@@ -457,10 +448,10 @@ export class CreditoPyccaForm {
       btn?.click();
     });
     // No se completan datos reales del cliente: Cancelar registra el pago igual.
-    if (await this.cerrarModalSiAplica(/Actualizaci[oó]n de datos clientes/, /^Cancelar$/, 8_000)) {
+    if (await this.cerrarModalSiAplica(/Actualizaci[oó]n de datos clientes/, /Cancelar/, 15_000)) {
       console.log('[CreditoPycca.agregar] "Actualización de datos clientes club Pycca" → Cancelar');
     }
-    if (await this.cerrarModalSiAplica(/Captaciones de seguros/, /^Cerrar$/, 5_000)) {
+    if (await this.cerrarModalSiAplica(/Captaciones de seguros/, /Cerrar/, 5_000)) {
       console.log('[CreditoPycca.agregar] "Captaciones de seguros" → Cerrar');
     }
     const filaOk = await this.pagoRegistradoRow

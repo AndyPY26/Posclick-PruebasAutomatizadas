@@ -62,10 +62,10 @@ Cada caja (centro) tiene su propio catálogo, stock, ofertas y clientes con cupo
 1. `globalSetup` hace login, lee el encabezado del POS (`CENTRO 004-150`) y lo muestra en consola:
    ```
    [globalSetup] POS detectado: CENTRO 004-112 · modo automático
-   [globalSetup] Usando datos de 004-112: 10 SKUs · oferta no vigente · 0 cédulas con crédito
+   [globalSetup] Usando datos de 004-112: 25 SKUs · oferta no vigente · 3 cédulas con crédito
    ```
 2. Publica el centro en `process.env.CAJA_ACTUAL`; `dataset.ts` (`datosCaja()`, `skuPool()`) entrega a los tests los datos de ese centro desde `tests/fixtures/centros.ts`.
-3. Los casos que dependen de datos del centro se **saltan** con motivo en vez de fallar: el Caso 2 si el centro no tiene oferta vigente, el Caso 5 si no tiene cédulas con crédito.
+3. Los casos que dependen de datos del centro se **saltan** con motivo en vez de fallar: el Caso 2 si el centro no tiene oferta vigente, el Caso 5 si no tiene cédulas con crédito. El salto se evalúa **antes del login** (`test.describe` + `test.skip(() => …)`), así que un caso saltado no abre el navegador. El motivo se ve en el HTML report.
 
 `E2E_CENTRO_ESPERADO` define el modo:
 
@@ -74,7 +74,16 @@ Cada caja (centro) tiene su propio catálogo, stock, ofertas y clientes con cupo
 | vacío | **Automático** (recomendado) | Corre en cualquier centro que esté en `centros.ts`. Si no está: *"El POS está en CENTRO 004-118 y no hay datos de prueba para ese centro. Centros soportados: 004-150, 004-112…"* |
 | `004-150` | **Estricto** | Exige ese centro. Si el POS muestra otro: *"El POS está en CENTRO 004-112 y la suite espera 004-150…"* |
 
-**Agregar un centro nuevo:** un bloque en `tests/fixtures/centros.ts` con sus SKUs (y si aplica `vigente` de la oferta), más sus variables `E2E_<centro>_*` en `.env` y `.env.example`. Las cédulas y cupones van en el `.env`, nunca en `centros.ts` (son datos de clientes reales).
+**Agregar un centro nuevo:** un bloque en `tests/fixtures/centros.ts` con sus SKUs (y si aplica `vigente` de la oferta), más sus variables `E2E_<centro>_*` en `.env` y `.env.example`. Las cédulas y cupones van en el `.env`, nunca en `centros.ts` (son datos de clientes reales). Para conseguir SKUs válidos del centro usa `npm run explorar:skus` (ver [Herramientas de mantenimiento](#herramientas-de-mantenimiento-testsutils)). Las cédulas con crédito suelen servir en cualquier centro, porque el cupo es del cliente: en 004-112 se usan las mismas de 004-150.
+
+#### Carrito con tope (Casos 3, 5, 6 y 7)
+
+`InvoicePage.cargarCarritoConTope(min, max)` arma un carrito dentro de un rango (efectivo: $1,000–$1,500 por D-07) sin conocer precios: agrega SKUs aleatorios del centro de a 1 unidad, lee el total real y quita el que se pasa del tope. **Si el pool se agota sin llegar al mínimo** (centro con pocos SKUs), sube la cantidad de un artículo ya cargado, empezando por el último, sin pasarse del tope; si el POS recorta la cantidad por stock, prueba con el anterior. Devuelve los items con su cantidad final:
+
+```
+[cargarCarritoConTope] pool agotado bajo $1000 → subir cantidades
+[cargarCarritoConTope] Y10974 x23 (POS: x23) → total=$1002.69
+```
 
 > El `.env` también tiene que existir en el servidor `pos4-dev` si se corre allá. `sync.ps1` lo copia por SSH junto con el resto del proyecto.
 
@@ -98,6 +107,7 @@ npm run test:caso1       # un caso puntual (caso1 … caso7)
 npm run test:caso2
 npm run test:headed      # modo con UI
 npm run report           # abre el HTML report con videos y traces
+npm run explorar:skus    # utilidad: busca SKUs válidos para el centro actual (no es un caso)
 ```
 
 Ver una traza específica:
@@ -143,12 +153,25 @@ npm run report                    # ver reporte HTML con videos y traces
 - **El centro lo asigna el POS según la IP de la máquina** (hoy tu PC puede caer en `004-112` y el servidor en `004-150`). En modo automático la suite se adapta sola; ver [Gestión de entornos](#gestión-de-entornos-centros).
 - Necesitas tu propio `.env` en la máquina local (ver [Configuración de credenciales](#configuración-de-credenciales-env)).
 
+### Fallas del entorno que la suite tolera
+
+El POS de desarrollo pierde conexión a ratos (`configuration/v1/connection-status → 500`, encabezado *"Fuera de línea"*). La suite reintenta en esos puntos y, si no se recupera, falla con un mensaje que dice qué revisar:
+
+| Dónde | Síntoma | Qué hace la suite |
+|---|---|---|
+| Login (`LoginPage`) | Microsoft vacía la contraseña: *"Please enter your password"* | La reescribe y reintenta (3 veces) |
+| Login (`LoginPage`) | El POS solo ofrece *"Iniciar Sesión Local"* (sin conexión a la nube) | Recarga `/login` (3 veces); luego falla pidiendo revisar red y túneles |
+| Continuar a pago (`InvoicePage.continuar`) | *"No se pudo generar la transacción"* + *"Fuera de línea"* | Espera hasta 90 s a que vuelva en línea y reintenta (3 veces); la transacción fallida no queda registrada |
+| Entrega futura (`DeliveryPage`) | El calendario de *"Fecha de entrega"* no se abre | Reintenta abrirlo; si el mes no tiene días habilitados, pasa al siguiente |
+
+Si estos mensajes se repiten, el problema es del servidor, no de la suite. *"Target page, context or browser has been closed"* al arrancar significa que se cerró la ventana de Chromium (p. ej. en `--headed`); basta con volver a correr.
+
 ## Estructura (Page Object Model)
 
 ```
 e2e/
 ├── playwright.config.ts        # workers:1, retries:0, video 'on', trace 'retain-on-failure', globalSetup
-├── global-setup.ts             # libera entregas de caja pendientes
+├── global-setup.ts             # login, detecta el centro (CAJA_ACTUAL) y abre la caja
 ├── tsconfig.json
 ├── package.json
 ├── context.md                  # RAG / notas internas de la suite
@@ -158,8 +181,11 @@ e2e/
 ├── tests/
 │   ├── pos-flujos-avanzados.spec.ts  # 7 casos (solo intención de negocio)
 │   ├── fixtures/
-│   │   ├── dataset.ts                # SKU_POOL, credenciales desde .env, utilidades puras
+│   │   ├── centros.ts                # datos por centro (SKUs; oferta y crédito desde .env)
+│   │   ├── dataset.ts                # adaptador: datosCaja()/skuPool() del centro actual, credenciales, utilidades
 │   │   └── pos.fixture.ts            # test.extend con `pos`, loginPage, dashboardPage
+│   ├── utils/
+│   │   └── explorar-skus.spec.ts     # utilidad: busca SKUs válidos del centro (npm run explorar:skus)
 │   └── pages/                        # Page Object Model — una clase por pantalla
 │       ├── LoginPage.ts
 │       ├── DashboardPage.ts
@@ -184,7 +210,7 @@ Los tests NO tocan selectores. Expresan intención de negocio contra Pages:
 test('Caso 2: proforma oferta especial', async ({ pos }) => {
   const { invoice, page } = pos;
   const cargar = await invoice.abrirCargarFactura();
-  const { cupon, cedula } = CREDENCIALES.ofertaEspecial; // desde el .env
+  const { cupon, cedula } = datosCaja().oferta!; // del centro actual (centros.ts + .env)
   await cargar.cargarOfertaEspecial(cupon, cedula);
   const pay = await invoice.continuar();
   await pay.pagarEnEfectivo();
@@ -193,19 +219,21 @@ test('Caso 2: proforma oferta especial', async ({ pos }) => {
 
 El fixture `pos` (de `tests/fixtures/pos.fixture.ts`) hace automáticamente: mock de impresión → login SSO → liberar entregas de caja pendientes → abrir Facturación, y entrega las Pages ya listas (`{ page, dashboard, invoice }`).
 
+Los modales se ubican por rol y título (`getByRole('dialog').filter(...)`), no por `.p-dialog`: en FE `pbd-9-sync-develop` varios modales ya no usan esa clase y su contenedor tiene id dinámico (`modal_dialog_id_*`).
+
 Para añadir una pantalla nueva: crear una clase en `tests/pages/`, exponer sus selectores como campos privados y sus acciones como métodos públicos que devuelven la siguiente Page cuando corresponda.
 
 ## Casos cubiertos
 
-Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`): **6 de 7 en verde**.
+Estado al 2026-10-27 en FE `pbd-9-sync-develop` / caja **004-112**: **6 de 6 ejecutables en verde** (en 004-150, al 2026-10-16 en FE 1.13.0: 6 de 7). Detalle en `context.md`.
 
 | # | Caso | Estado |
 |---|---|---|
 | 1 | Suspensión única | ✅ |
-| 2 | Oferta Especial | ❌ **datos**: la oferta de `CREDENCIALES.ofertaEspecial` no existe en el backend (404) |
+| 2 | Oferta Especial | ⏭ se salta: no hay oferta vigente en el centro (en 004-150 el cupón da 404) |
 | 3 | Independencia clientes | ✅ (+ defecto D-01) |
 | 4 | Autorización supervisor | ✅ hasta pantalla |
-| 5 | Cuotas crédito | ✅ |
+| 5 | Cuotas crédito | ✅ (revisa todas las cédulas de `E2E_<centro>_CREDITO` y usa la de mayor cupo) |
 | 6 | Venta efectivo + cliente | ✅ con carrito acotado a $1,000–$1,500 (workaround D-07) |
 | 7 | Entrega futura + efectivo | ✅ con carrito acotado (workaround D-07) |
 
@@ -213,13 +241,34 @@ Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`)
 
 - **D-01** Voucher *ENTREGA MERCADERIA (F4)* no reimprime (*"No hay documentos para imprimir"*; en 1.13.0 es un aviso efímero).
 - **D-02** Suspensión sin feedback visible al usuario.
-- **D-03** Créditos de prueba bloqueados / sobregirados (en 004-150 hay cédulas con cupo en `E2E_004_150_CREDITO`; el Caso 5 busca la primera utilizable).
+- **D-03** Créditos de prueba bloqueados / sobregirados. El Caso 5 revisa todas las cédulas de `E2E_<centro>_CREDITO`, logea el estado de cada una (enmascarada, solo los últimos 4 dígitos) y usa la de mayor cupo:
+  ```
+  [Caso5]   1/3 cédula ******3622: ✓ con cupo (disponible $3400)
+  [Caso5] resumen crédito: 3/3 cédula(s) utilizables → ...
+  ```
 - **D-04** Autorización repetitiva.
 - **D-05** Código de oferta no visible en cobro.
 - ~~**D-06**~~ Falso positivo: no era falta de stock sino `fill()` sobre contadores `p-inputnumber`.
 - **D-07** Con carrito > $2,000 en efectivo, solo se registra el primer pago de $2,000 (los Casos 3, 6 y 7 acotan el carrito a $1,000–$1,500).
 
 **No verificable desde la suite:** contenido de documentos impresos (sin impresora ni preview).
+
+## Herramientas de mantenimiento (`tests/utils`)
+
+Utilidades para preparar datos de prueba. **No son casos de negocio** y `npm test` no las ejecuta (se saltan antes del login). Se pueden borrar sin afectar la suite.
+
+**`explorar-skus.spec.ts`**: busca SKUs válidos para el centro actual del POS.
+
+```bash
+npm run explorar:skus                                    # prueba el pool de 004-150
+set E2E_EXPLORAR_ORIGEN=004-xxx && npm run explorar:skus # otro centro de origen (cmd)
+```
+
+1. Hace login y entra a Facturación.
+2. Prueba en el centro actual los SKUs del centro de origen: agrega cada uno, anota su precio y **lo quita** (no emite ninguna venta).
+3. Se detiene al encontrar 15 y los guarda en `evidencias/skus-<centro>.json`; también los imprime listos para pegar en `centros.ts`.
+
+Úsala al pasar a un centro nuevo, cuando un centro se quede sin stock o cuando falten SKUs caros para llegar a un monto. Si el POS está en el mismo centro de origen, se salta. Solo corre cuando se la invoca por ruta: en ese caso `playwright.config.ts` activa `E2E_EXPLORAR_SKUS`.
 
 ## Trucos no obvios (uso de selectores / interacciones)
 
@@ -231,7 +280,7 @@ Estado final al 2026-10-16 en FE 1.13.0 / caja 004-150 (detalle en `context.md`)
 - Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. En 1.13.0 el regalo suma su precio al total y hay que pagar la diferencia.
 - **Botones `lib-button` / `p-button`:** el click debe ir al `<button>` interno; sobre el wrapper no dispara la acción.
 - **Contadores `p-inputnumber`:** `fill()` no actualiza el valor de Angular; usar el botón **+** y Tab, o teclear (`pressSequentially`).
-- **Modales nuevos de 1.13.0:** "Descuentos disponibles para el cliente", "Registro de pago en efectivo", "Actualización de datos clientes club Pycca" (se cancela), "Captaciones de seguros" (Cerrar), "Cierre de Cajón Monedero". Detalle y selectores en `context.md`.
+- **Modales nuevos de 1.13.0:** "Descuentos disponibles para el cliente", "Registro de pago en efectivo", "Actualización de datos clientes club Pycca" (se cancela), "Captaciones de seguros" (Cerrar), "Cierre de Cajón Monedero". Detalle y selectores en `context.md`. En `pbd-9-sync-develop`, "Actualización de datos…" y "Captaciones…" se ubican por `getByRole('dialog')` + título.
 - **Servidor remoto:** `pos4-dev` no es un repo git; los cambios locales llegan con `.\sync.ps1`. No correr dos suites a la vez: `npm run test:casoN` borra `evidencias/test-results` y comparten caja.
 - **Suite completa:** el spec usa modo `serial` y se detiene en el primer fallo; para ver los 7 casos: `for c in 1 2 3 4 5 6 7; do npx playwright test -g "Caso $c:"; done`.
 

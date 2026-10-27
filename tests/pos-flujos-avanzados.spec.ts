@@ -1,6 +1,5 @@
 import { test, expect } from './fixtures/pos.fixture';
 import {
-  cajaActual,
   datosCaja,
   generarCarrito,
   tomarCedulas,
@@ -35,10 +34,9 @@ test.describe.configure({ mode: 'serial' });
 const TOTAL_EFECTIVO_MIN = 1_000;
 const TOTAL_EFECTIVO_MAX = 1_500;
 
-/** Carrito acotado al rango de pago en efectivo (1 unidad por SKU). */
+/** Carrito acotado al rango de pago en efectivo. */
 async function carritoBajoTope(invoice: InvoicePage): Promise<ItemCarrito[]> {
-  const skus = await invoice.cargarCarritoConTope(TOTAL_EFECTIVO_MIN, TOTAL_EFECTIVO_MAX);
-  return skus.map((sku) => ({ sku, cantidad: 1 }));
+  return invoice.cargarCarritoConTope(TOTAL_EFECTIVO_MIN, TOTAL_EFECTIVO_MAX);
 }
 
 /* ==========================================================================
@@ -114,41 +112,47 @@ test('Caso 1: solo se permite una transacción suspendida y su recuperación es 
 /* ==========================================================================
  * CASO 2 — Proforma de Oferta Especial (oferta del centro, centros.ts) y conversión a factura
  * ========================================================================*/
-test('Caso 2: la proforma de oferta especial conserva cliente, ítems y beneficio al facturar', async ({
-  pos,
-}) => {
-  const oferta = datosCaja().oferta;
-  test.skip(!oferta?.vigente, `Saltado: el CENTRO ${cajaActual()} no tiene una oferta especial vigente configurada.`);
-  const { invoice, page } = pos;
-  const { cedula, cupon } = oferta!;
-
-  // 1. Abrir el buscador de documentos y pasar a "Oferta Especial".
-  const cargar = await invoice.abrirCargarFactura();
-  await cargar.cargarOfertaEspecial(cupon, cedula);
-
-  // 2. La proforma se carga con el cliente y el beneficio aplicado.
-  await expect(cargar.tituloProforma(cupon)).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator(`text=${cedula}`).first()).toBeVisible();
-
-  const descuentoProforma = montoDe(
-    await invoice.valorDescuento.innerText().catch(() => '0'),
+test.describe(() => {
+  // Se evalúa antes de los fixtures: si se salta, no hace login.
+  test.skip(
+    () => !datosCaja().oferta?.vigente,
+    'Saltado: el centro del POS no tiene una oferta especial vigente (centros.ts / .env).',
   );
-  const totalProforma = montoDe(
-    await invoice.totalValor.innerText().catch(() => '0'),
-  );
-  expect(descuentoProforma, 'la oferta especial debe aplicar un descuento').toBeGreaterThan(0);
-  await evidencia(page, 'caso2-01-proforma-cargada');
 
-  // 3. Continuar: los datos deben viajar intactos a la pantalla de cobro.
-  const pay = await invoice.continuar();
-  await expect(page.locator(`text=${cedula}`).first()).toBeVisible();
-  await expect(pay.valorTotalRow).toContainText(totalProforma.toFixed(2));
-  await evidencia(page, 'caso2-02-datos-en-cobro');
+  test('Caso 2: la proforma de oferta especial conserva cliente, ítems y beneficio al facturar', async ({
+    pos,
+  }) => {
+    const { invoice, page } = pos;
+    const { cedula, cupon } = datosCaja().oferta!;
 
-  // 4. Cobrar y emitir la factura.
-  await pay.pagarEnEfectivo();
-  await evidencia(page, 'caso2-factura-proforma');
-  await cerrarDialogos(page);
+    // 1. Abrir el buscador de documentos y pasar a "Oferta Especial".
+    const cargar = await invoice.abrirCargarFactura();
+    await cargar.cargarOfertaEspecial(cupon, cedula);
+
+    // 2. La proforma se carga con el cliente y el beneficio aplicado.
+    await expect(cargar.tituloProforma(cupon)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(`text=${cedula}`).first()).toBeVisible();
+
+    const descuentoProforma = montoDe(
+      await invoice.valorDescuento.innerText().catch(() => '0'),
+    );
+    const totalProforma = montoDe(
+      await invoice.totalValor.innerText().catch(() => '0'),
+    );
+    expect(descuentoProforma, 'la oferta especial debe aplicar un descuento').toBeGreaterThan(0);
+    await evidencia(page, 'caso2-01-proforma-cargada');
+
+    // 3. Continuar: los datos deben viajar intactos a la pantalla de cobro.
+    const pay = await invoice.continuar();
+    await expect(page.locator(`text=${cedula}`).first()).toBeVisible();
+    await expect(pay.valorTotalRow).toContainText(totalProforma.toFixed(2));
+    await evidencia(page, 'caso2-02-datos-en-cobro');
+
+    // 4. Cobrar y emitir la factura.
+    await pay.pagarEnEfectivo();
+    await evidencia(page, 'caso2-factura-proforma');
+    await cerrarDialogos(page);
+  });
 });
 
 /* ==========================================================================
@@ -252,62 +256,66 @@ test('Caso 4: la autorización de supervisor con lector de tarjeta habilita la o
  *
  * Requiere una cédula con tarjeta NO bloqueada y cupo suficiente.
  * ========================================================================*/
-test('Caso 5: la simulación de cuotas coincide con el documento emitido', async ({ pos }) => {
+test.describe(() => {
+  // Se evalúa antes de los fixtures: si se salta, no hace login.
   test.skip(
-    datosCaja().credito.length === 0,
-    `Saltado: el CENTRO ${cajaActual()} no tiene cédulas con cupo de crédito configuradas.`,
+    () => datosCaja().credito.length === 0,
+    'Saltado: el centro del POS no tiene cédulas con cupo de crédito (E2E_<centro>_CREDITO en .env).',
   );
-  const { invoice, page } = pos;
 
-  console.log('[Caso5] 1/10 → cargar carrito aleatorio');
-  // Carrito chico: evita 'Validación de saldo – Sin Stock' y quedar sobre el cupo.
-  await invoice.cargarCarritoConTope(500, 1_000);
+  test('Caso 5: la simulación de cuotas coincide con el documento emitido', async ({ pos }) => {
+    const { invoice, page } = pos;
 
-  console.log('[Caso5] 2/10 → asignar cédula al cliente de facturación');
-  await invoice.persona.asignar(tomarCedulas(1)[0]);
+    console.log('[Caso5] 1/10 → cargar carrito aleatorio');
+    // Carrito chico: evita 'Validación de saldo – Sin Stock' y quedar sobre el cupo.
+    await invoice.cargarCarritoConTope(500, 1_000);
 
-  console.log('[Caso5] 3/10 → continuar a /pos-ui/pay');
-  const pay = await invoice.continuar();
+    console.log('[Caso5] 2/10 → asignar cédula al cliente de facturación');
+    await invoice.persona.asignar(tomarCedulas(1)[0]);
 
-  console.log('[Caso5] 4/10 → seleccionar Crédito PYCCA');
-  const credito = await pay.seleccionarCreditoPycca();
+    console.log('[Caso5] 3/10 → continuar a /pos-ui/pay');
+    const pay = await invoice.continuar();
 
-  const cedulaCredito = await buscarCedulaConCreditoUtilizable(credito);
-  expect(
-    cedulaCredito,
-    'PRECONDICIÓN NO CUMPLIDA: ninguna cédula del pool tiene una tarjeta de ' +
-      'Crédito PYCCA habilitada con cupo. Solicitar a infraestructura habilitar o ' +
-      'reponer el cupo de una tarjeta de prueba.',
-  ).not.toBeNull();
+    console.log('[Caso5] 4/10 → seleccionar Crédito PYCCA');
+    const credito = await pay.seleccionarCreditoPycca();
 
-  console.log('[Caso5] 6/10 → leer cupo disponible');
-  const disponible = montoDe(await credito.disponibleInput.inputValue());
-  expect(disponible, 'la tarjeta debe tener cupo disponible').toBeGreaterThan(0);
+    const cedulaCredito = await buscarCedulaConCreditoUtilizable(credito);
+    expect(
+      cedulaCredito,
+      'PRECONDICIÓN NO CUMPLIDA: ninguna cédula del pool tiene una tarjeta de ' +
+        'Crédito PYCCA habilitada con cupo. Solicitar a infraestructura habilitar o ' +
+        'reponer el cupo de una tarjeta de prueba.',
+    ).not.toBeNull();
 
-  console.log('[Caso5] 7/10 → seleccionar financiamiento (3 cuotas)');
-  await credito.seleccionarFinanciamiento(3);
+    console.log('[Caso5] 6/10 → leer cupo disponible');
+    const disponible = montoDe(await credito.disponibleInput.inputValue());
+    expect(disponible, 'la tarjeta debe tener cupo disponible').toBeGreaterThan(0);
 
-  console.log('[Caso5] 8/10 → leer simulación');
-  const simulacion = {
-    valor: montoDe(await credito.valorAPagarInput.inputValue()),
-    cuota: montoDe(await credito.cuotaInput.inputValue()),
-    plazo: numeroDeCuotas(await credito.financiamientoLocator.innerText()),
-  };
-  console.log(`[Caso5]   simulación valor=${simulacion.valor} cuota=${simulacion.cuota} plazo=${simulacion.plazo}`);
-  expect(simulacion.cuota).toBeGreaterThan(0);
-  expect(simulacion.plazo).toBeGreaterThan(0);
-  await evidencia(page, 'caso5-01-simulacion-pantalla');
+    console.log('[Caso5] 7/10 → seleccionar financiamiento (3 cuotas)');
+    await credito.seleccionarFinanciamiento(3);
 
-  console.log('[Caso5] 9/10 → agregar pago registrado');
-  await credito.agregar();
+    console.log('[Caso5] 8/10 → leer simulación');
+    const simulacion = {
+      valor: montoDe(await credito.valorAPagarInput.inputValue()),
+      cuota: montoDe(await credito.cuotaInput.inputValue()),
+      plazo: numeroDeCuotas(await credito.financiamientoLocator.innerText()),
+    };
+    console.log(`[Caso5]   simulación valor=${simulacion.valor} cuota=${simulacion.cuota} plazo=${simulacion.plazo}`);
+    expect(simulacion.cuota).toBeGreaterThan(0);
+    expect(simulacion.plazo).toBeGreaterThan(0);
+    await evidencia(page, 'caso5-01-simulacion-pantalla');
 
-  console.log('[Caso5] 10/10 → verificar consistencia');
-  const registrado = await credito.pagoRegistradoRow.innerText();
-  expect(registrado).toContain(String(simulacion.plazo));
-  expect(montoDe(await credito.pagoRegistradoMonto.innerText())).toBeCloseTo(simulacion.valor, 2);
-  expect(simulacion.cuota * simulacion.plazo).toBeGreaterThanOrEqual(simulacion.valor - 0.05);
-  await evidencia(page, 'caso5-consistencia-cuotas');
-  console.log('[Caso5] ✅ completado');
+    console.log('[Caso5] 9/10 → agregar pago registrado');
+    await credito.agregar();
+
+    console.log('[Caso5] 10/10 → verificar consistencia');
+    const registrado = await credito.pagoRegistradoRow.innerText();
+    expect(registrado).toContain(String(simulacion.plazo));
+    expect(montoDe(await credito.pagoRegistradoMonto.innerText())).toBeCloseTo(simulacion.valor, 2);
+    expect(simulacion.cuota * simulacion.plazo).toBeGreaterThanOrEqual(simulacion.valor - 0.05);
+    await evidencia(page, 'caso5-consistencia-cuotas');
+    console.log('[Caso5] ✅ completado');
+  });
 });
 
 /* ==========================================================================
@@ -412,8 +420,10 @@ test('Caso 7: venta con entrega futura y pago en efectivo', async ({ pos }) => {
  * ==========================================================================*/
 
 /**
- * Recorre las cédulas con crédito del centro buscando una tarjeta seleccionable (sin p-disabled/candado).
- * Devuelve null si ninguna sirve, para que el test falle con mensaje accionable.
+ * Revisa TODAS las cédulas con crédito del centro (tarjeta seleccionable, sin
+ * p-disabled/candado, y cupo > 0), logea el estado de cada una y deja
+ * seleccionada la de mayor cupo. Devuelve null si ninguna sirve, para que el
+ * test falle con mensaje accionable.
  *
  * Vive en el spec porque es lógica de setup del caso, no de la Page: cambia la
  * cédula varias veces y abre/cierra el dropdown repetidamente.
@@ -421,23 +431,45 @@ test('Caso 7: venta con entrega futura y pago en efectivo', async ({ pos }) => {
 async function buscarCedulaConCreditoUtilizable(
   credito: CreditoPyccaForm,
 ): Promise<string | null> {
-  for (const cedula of [...datosCaja().credito].sort(() => Math.random() - 0.5)) {
+  const cedulas = datosCaja().credito;
+  console.log(`[Caso5] verificando crédito de ${cedulas.length} cédula(s) del .env`);
+  const resultados: { cedula: string; estado: string; cupo: number }[] = [];
+  for (const [i, cedula] of cedulas.entries()) {
+    const etiqueta = `[Caso5]   ${i + 1}/${cedulas.length} cédula ${enmascarar(cedula)}`;
     await credito.setCedula(cedula);
     await credito.abrirTarjetaDropdown();
     const { hayTarjeta, bloqueada } = await credito.primeraTarjetaBloqueada();
     await credito.cerrarOverlay();
     if (!hayTarjeta || bloqueada) {
-      console.log(`[Caso5] cédula ${cedula}: tarjeta ${!hayTarjeta ? 'no existe' : 'bloqueada'}`);
+      const estado = !hayTarjeta ? 'sin tarjeta Crédito PYCCA' : 'tarjeta bloqueada';
+      console.log(`${etiqueta}: ✗ ${estado}`);
+      resultados.push({ cedula, estado, cupo: 0 });
       continue;
     }
     // Validación REAL: seleccionar la tarjeta y leer el cupo disponible.
     await credito.seleccionarTarjeta(1);
-    const disponible = montoDe(await credito.disponibleInput.inputValue());
-    if (disponible > 0) {
-      console.log(`[Caso5] cédula ${cedula} con cupo=${disponible} ✓`);
-      return cedula;
-    }
-    console.log(`[Caso5] cédula ${cedula}: tarjeta OK pero cupo=0 → siguiente`);
+    const cupo = montoDe(await credito.disponibleInput.inputValue());
+    const estado = cupo > 0 ? 'con cupo' : 'tarjeta OK pero cupo $0';
+    console.log(`${etiqueta}: ${cupo > 0 ? '✓' : '✗'} ${estado} (disponible $${cupo})`);
+    resultados.push({ cedula, estado, cupo });
   }
-  return null;
+
+  const utilizables = resultados.filter((r) => r.cupo > 0);
+  console.log(
+    `[Caso5] resumen crédito: ${utilizables.length}/${resultados.length} cédula(s) utilizables` +
+      (utilizables.length ? ` → ${utilizables.map((r) => enmascarar(r.cedula)).join(', ')}` : ''),
+  );
+  const elegida = utilizables.sort((a, b) => b.cupo - a.cupo)[0];
+  if (!elegida) return null;
+
+  // El formulario quedó con la última cédula revisada: volver a la elegida.
+  await credito.setCedula(elegida.cedula);
+  await credito.seleccionarTarjeta(1);
+  console.log(`[Caso5] usando cédula ${enmascarar(elegida.cedula)} (cupo $${elegida.cupo})`);
+  return elegida.cedula;
+}
+
+/** Cédula para logs: solo los últimos 4 dígitos (son datos de clientes reales). */
+function enmascarar(cedula: string): string {
+  return `******${cedula.slice(-4)}`;
 }

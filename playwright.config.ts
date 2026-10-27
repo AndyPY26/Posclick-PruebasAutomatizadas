@@ -6,6 +6,10 @@ import dotenv from 'dotenv';
 // quiet: dotenv >= 17 imprime un aviso en cada proceso (config + workers).
 dotenv.config({ quiet: true });
 
+// La utilidad tests/utils/explorar-skus.spec.ts solo corre cuando se la
+// invoca explícitamente; los workers heredan esta variable del proceso main.
+if (process.argv.some((a) => a.includes('explorar-skus'))) process.env.E2E_EXPLORAR_SKUS = '1';
+
 /**
  * Configuración para la suite E2E de POSCLICK.
  *

@@ -44,6 +44,12 @@ export class InvoicePage {
   private readonly cancelarBtn = this.page.locator('#mf_sale_button_cancel');
   private readonly confirmarEliminarBtn = this.page.locator('button:has-text("Sí, eliminar")');
   private readonly continuarBtn = this.page.locator('#mf_sale_button_accept');
+  /** Modal de error del POS cuando falla POST sales/v1/transaction. */
+  private readonly errorTransaccion = this.page
+    .getByRole('dialog')
+    .filter({ has: this.page.getByRole('heading', { name: /No se pudo generar la transacci[oó]n/i }) });
+  /** Indicador del encabezado cuando el POS pierde conexión con el backend. */
+  private readonly fueraDeLinea = this.page.getByText('Fuera de línea', { exact: true });
 
   /** Botón "Confirmar" del diálogo propio de suspensión (NO es el de supervisor). */
   private readonly confirmarSuspension = this.page.locator('button:has-text("Confirmar")');
@@ -109,6 +115,30 @@ export class InvoicePage {
       }
     }
     const pay = new PaymentPage(this.page);
+    for (let intento = 1; ; intento++) {
+      const llego = await this.page
+        .waitForURL(/pos-ui\/pay/, { timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (llego) break;
+      const sinTransaccion = await this.errorTransaccion.isVisible().catch(() => false);
+      if (!sinTransaccion || intento === 3) {
+        const offline = await this.fueraDeLinea.isVisible().catch(() => false);
+        throw new Error(
+          'No se pudo pasar a /pos-ui/pay' +
+            (sinTransaccion ? ': el POS respondió "No se pudo generar la transacción"' : '') +
+            (offline ? ' y está "Fuera de línea" (perdió conexión con el backend).' : '.'),
+        );
+      }
+      // Visto el 2026-10-26: connection-status y sales/v1/transaction → 500 al
+      // presionar Continuar. Se espera a que el POS vuelva en línea y se reintenta.
+      console.log(`[InvoicePage.continuar] intento ${intento}: "No se pudo generar la transacción" → esperar conexión y reintentar`);
+      await this.page.keyboard.press('Escape');
+      await this.errorTransaccion.waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => undefined);
+      await this.fueraDeLinea.waitFor({ state: 'hidden', timeout: 90_000 }).catch(() => undefined);
+      await this.page.waitForTimeout(3_000);
+      await this.continuarBtn.first().evaluate((el: HTMLElement) => el.click());
+    }
     await pay.esperarCargada();
     return pay;
   }
@@ -238,12 +268,19 @@ export class InvoicePage {
    * Los precios no están en el dataset: se agregan SKUs aleatorios de a 1 unidad,
    * se lee el total real tras cada uno y, si se pasa del tope, se quita ese SKU.
    * Útil para esquivar el límite de $2,000 por pago en efectivo (D-07).
+   *
+   * Si el pool del centro se agota sin llegar a `minTotal` (centros con pocos
+   * SKUs), sube la cantidad de los artículos ya cargados, empezando por el
+   * último, hasta superar el mínimo sin pasarse del tope.
+   *
+   * @returns los items del carrito con su cantidad final.
    */
-  async cargarCarritoConTope(minTotal: number, maxTotal: number, maxIntentos = 40): Promise<string[]> {
+  async cargarCarritoConTope(minTotal: number, maxTotal: number, maxIntentos = 40): Promise<ItemCarrito[]> {
     const pool = [...skuPool()].sort(() => Math.random() - 0.5).slice(0, maxIntentos);
-    const cargados: string[] = [];
+    const cargados: (ItemCarrito & { precio: number })[] = [];
     for (const sku of pool) {
-      if ((await this.leerTotal()) >= minTotal) break;
+      const antes = await this.leerTotal();
+      if (antes >= minTotal) break;
       try {
         await this.cargarCarrito([{ sku, cantidad: 1 }]);
       } catch {
@@ -255,17 +292,69 @@ export class InvoicePage {
         await this.quitarProducto(sku);
         continue;
       }
-      cargados.push(sku);
+      cargados.push({ sku, cantidad: 1, precio: total - antes });
       console.log(`[cargarCarritoConTope] +${sku} → total=$${total}`);
     }
+
+    if ((await this.leerTotal()) < minTotal) {
+      console.log(`[cargarCarritoConTope] pool agotado bajo $${minTotal} → subir cantidades`);
+      for (const item of [...cargados].reverse()) {
+        if (await this.subirCantidadHastaMinimo(item, minTotal, maxTotal)) break;
+      }
+    }
+
     const final = await this.leerTotal();
-    console.log(`[cargarCarritoConTope] total final=$${final} skus=${cargados.join(', ')}`);
+    const resumen = cargados.map((i) => (i.cantidad > 1 ? `${i.sku}x${i.cantidad}` : i.sku));
+    console.log(`[cargarCarritoConTope] total final=$${final} skus=${resumen.join(', ')}`);
     if (final < minTotal || final > maxTotal) {
       throw new Error(
         `No se pudo armar un carrito entre $${minTotal} y $${maxTotal} (quedó en $${final}).`,
       );
     }
-    return cargados;
+    return cargados.map(({ sku, cantidad }) => ({ sku, cantidad }));
+  }
+
+  /**
+   * Sube la cantidad de `item` en el carrito hasta que el total alcance
+   * `minTotal`. Calcula las unidades con el precio unitario y corrige con el
+   * total real que muestra el POS (descuentos por volumen, stock insuficiente).
+   * No toca el item si su precio no permite caer dentro de [minTotal, maxTotal].
+   *
+   * @returns true si el total quedó dentro del rango.
+   */
+  private async subirCantidadHastaMinimo(
+    item: ItemCarrito & { precio: number },
+    minTotal: number,
+    maxTotal: number,
+  ): Promise<boolean> {
+    if (item.precio <= 0) return false;
+    const base = (await this.leerTotal()) - item.precio * item.cantidad;
+    const cantidad = Math.ceil((minTotal - base) / item.precio);
+    if (base + cantidad * item.precio > maxTotal) {
+      console.log(`[cargarCarritoConTope] ${item.sku} ($${item.precio}) no cabe en el rango → siguiente`);
+      return false;
+    }
+
+    const input = this.cantidadInputLocator(item.sku);
+    for (let n = cantidad; n <= cantidad + 3; n++) {
+      await input.fill(String(n));
+      await input.press('Tab');
+      await this.page.waitForTimeout(1_500);
+      const total = await this.leerTotal();
+      const real = Number(await input.inputValue().catch(() => String(n))) || n;
+      console.log(`[cargarCarritoConTope] ${item.sku} x${n} (POS: x${real}) → total=$${total}`);
+      item.cantidad = real;
+      if (real < n || total > maxTotal) {
+        // El POS recortó la cantidad (stock) o se pasó del tope: volver a 1.
+        await input.fill('1');
+        await input.press('Tab');
+        await this.page.waitForTimeout(1_500);
+        item.cantidad = 1;
+        return false;
+      }
+      if (total >= minTotal) return true;
+    }
+    return false;
   }
 
   /** Quita una fila del carrito con el tacho de esa fila (+ confirmación si aparece). */

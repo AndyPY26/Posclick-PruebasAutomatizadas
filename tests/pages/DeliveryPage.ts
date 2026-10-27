@@ -140,12 +140,44 @@ export class DeliveryPage {
       );
     }
 
-    await this.abrirCalendario.click();
-    await this.page.waitForTimeout(1_200);
-    await this.diaHabilitado.last().click();
-    await this.page.keyboard.press('Escape');
+    await this.elegirFechaEntrega();
     await this.telefono.fill('0991234567');
     await this.page.waitForTimeout(1_000);
+  }
+
+  /**
+   * Abre el calendario de "Fecha de entrega" y elige el último día habilitado.
+   *
+   * El click en "Elige fecha" a veces no despliega el panel (corrida del
+   * 2026-10-26 en 004-112: el panel nunca llegó al DOM), así que se reintenta
+   * hasta ver los días. Si el mes visible no tiene días habilitados (plazo de
+   * entrega que cae en el mes siguiente), avanza un mes.
+   */
+  private async elegirFechaEntrega(): Promise<void> {
+    const dias = this.page.locator('span.p-datepicker-day');
+    for (let intento = 1; intento <= 3; intento++) {
+      await this.abrirCalendario.click();
+      const abierto = await dias
+        .first()
+        .waitFor({ state: 'visible', timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!abierto) {
+        console.log(`[DeliveryPage] intento ${intento}: el calendario no se abrió → reintentar`);
+        await this.page.keyboard.press('Escape');
+        await this.page.waitForTimeout(1_500);
+        continue;
+      }
+      if ((await this.diaHabilitado.count()) === 0) {
+        console.log('[DeliveryPage] sin días habilitados en el mes visible → mes siguiente');
+        await this.page.locator('.p-datepicker-next-button').first().click();
+        await this.page.waitForTimeout(800);
+      }
+      await this.diaHabilitado.last().click();
+      await this.page.keyboard.press('Escape');
+      return;
+    }
+    throw new Error('El calendario de "Fecha de entrega" no se abrió tras 3 intentos.');
   }
 
   /** Continuar → vuelve al carrito (/pos-ui/invoice). */

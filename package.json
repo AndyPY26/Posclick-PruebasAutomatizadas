@@ -22,6 +22,7 @@
     "test:caso5": "playwright test -g \"Caso 5\"",
     "test:caso6": "playwright test -g \"Caso 6\"",
     "test:caso7": "playwright test -g \"Caso 7\"",
+    "explorar:skus": "playwright test tests/utils/explorar-skus.spec.ts",
     "test:headed": "playwright test --headed",
     "report": "playwright show-report ./evidencias/html-report",
     "trace": "playwright show-trace",
