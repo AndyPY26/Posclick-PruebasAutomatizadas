@@ -1,4 +1,5 @@
 import { Page, Locator } from '@playwright/test';
+import { clickCustom } from '../fixtures/dataset';
 import { InvoicePage } from './InvoicePage';
 import { BoxDeliveryPage } from './BoxDeliveryPage';
 import { BoxOpeningPage } from './BoxOpeningPage';
@@ -7,20 +8,31 @@ import { PrintHistoryPage } from './PrintHistoryPage';
 /**
  * Dashboard / landing (/).
  *
- * El orden de las tarjetas corresponde a POSCLICK 1.12.0-rc.1 (15 módulos).
- * Mapeado contra el DOM real (scrape 2026-10-13):
- *   nth=0 → Facturación
- *   nth=3 → Entrega de Caja
- *   nth=4 → Historial de impresión
- *   nth=8 → Apertura de Caja
+ * Las tarjetas se ubican por su TÍTULO visible, no por su posición.
+ *
+ * Criterio (verificado contra el DOM real del POS el 2026-10-29, FE con 15
+ * módulos): ninguna tarjeta tiene un id propio — los 15 botones "IR" comparten
+ * `id="button_button.go"` y el `pn_id_NN` del panel lo autogenera PrimeNG en
+ * cada render. El único anclaje estable es el encabezado de la tarjeta, así
+ * que se filtra el `<p-panel class="custom-panel-dashboard">` por su título
+ * exacto y se toma el "IR" de adentro. Esto reemplaza al antiguo
+ * `.nth(0/3/4/8)`, que se rompía si el POS reordenaba o habilitaba módulos.
  */
 export class DashboardPage {
   constructor(private readonly page: Page) {}
 
-  private readonly irFacturacion = this.page.locator('button:has-text("IR")').nth(0);
-  private readonly irEntregaCaja = this.page.locator('button:has-text("IR")').nth(3);
-  private readonly irHistorialImpresion = this.page.locator('button:has-text("IR")').nth(4);
-  private readonly irAperturaCaja = this.page.locator('button:has-text("IR")').nth(8);
+  /** Botón "IR" de la tarjeta cuyo título visible es exactamente `titulo`. */
+  private tarjetaIr(titulo: string): Locator {
+    return this.page
+      .locator('p-panel.custom-panel-dashboard')
+      .filter({ has: this.page.getByText(titulo, { exact: true }) })
+      .locator('button:has-text("IR")');
+  }
+
+  private readonly irFacturacion = this.tarjetaIr('Facturación');
+  private readonly irEntregaCaja = this.tarjetaIr('Entrega de Caja');
+  private readonly irHistorialImpresion = this.tarjetaIr('Historial de impresión');
+  private readonly irAperturaCaja = this.tarjetaIr('Apertura de Caja');
 
   async goto(): Promise<void> {
     await this.page.goto('/', { waitUntil: 'networkidle' });
@@ -38,28 +50,28 @@ export class DashboardPage {
   }
 
   async irAFacturacion(): Promise<InvoicePage> {
-    await this.jsClick(this.irFacturacion);
+    await clickCustom(this.irFacturacion);
     const invoice = new InvoicePage(this.page);
     await invoice.esperarCargada();
     return invoice;
   }
 
   async irAEntregaCaja(): Promise<BoxDeliveryPage> {
-    await this.irEntregaCaja.click();
+    await clickCustom(this.irEntregaCaja);
     const box = new BoxDeliveryPage(this.page);
     await box.esperarCargada();
     return box;
   }
 
   async irAHistorialImpresion(): Promise<PrintHistoryPage> {
-    await this.irHistorialImpresion.click();
+    await clickCustom(this.irHistorialImpresion);
     const hist = new PrintHistoryPage(this.page);
     await hist.esperarCargada();
     return hist;
   }
 
   async irAAperturaCaja(): Promise<BoxOpeningPage> {
-    await this.irAperturaCaja.click();
+    await clickCustom(this.irAperturaCaja);
     const bo = new BoxOpeningPage(this.page);
     await bo.esperarCargada();
     return bo;
@@ -67,24 +79,9 @@ export class DashboardPage {
 
   /** Verifica rápido si Facturación navega — señal de caja abierta. */
   private async puedeFacturar(): Promise<boolean> {
-    await this.irFacturacion.click();
+    await clickCustom(this.irFacturacion);
     await this.page.waitForTimeout(4_000);
     return this.page.url().includes('/pos-ui/invoice');
-  }
-
-  /**
-   * PRECONDICIÓN: deja la caja abierta y lista para facturar.
-   *
-   * Flujo:
-   *  1. Si Facturación ya navega a `/pos-ui/invoice`, no hace nada.
-   *  2. Si no, va a Apertura de Caja y clickea "Aperturar caja"
-   *     (POST /pos/v1/open → 204).
-   *  3. Reintenta hasta 3 veces porque la caja puede quedar en
-   *     estados intermedios (Angular guard tarda en refrescar).
-   */
-  /** Click directo vía JS evaluate — evita cualquier overlay interceptor. */
-  private async jsClick(locator: Locator): Promise<void> {
-    await locator.evaluate((el: HTMLElement) => el.click());
   }
 
   /**
@@ -141,11 +138,21 @@ export class DashboardPage {
     }
   }
 
+  /**
+   * PRECONDICIÓN: deja la caja abierta y lista para facturar.
+   *
+   * Flujo:
+   *  1. Si Facturación ya navega a `/pos-ui/invoice`, no hace nada.
+   *  2. Si no, va a Apertura de Caja y clickea "Aperturar caja"
+   *     (POST /pos/v1/open → 204).
+   *  3. Reintenta hasta 5 veces porque la caja puede quedar en
+   *     estados intermedios (Angular guard tarda en refrescar).
+   */
   async asegurarCajaAbierta(): Promise<void> {
     for (let intento = 0; intento < 5; intento++) {
       await this.goto();
       await this.resolverBloqueos();
-      await this.jsClick(this.irFacturacion);
+      await clickCustom(this.irFacturacion);
       await this.page.waitForTimeout(5_000);
       if (this.page.url().includes('/pos-ui/invoice')) {
         await this.goto();
@@ -156,11 +163,11 @@ export class DashboardPage {
       );
 
       await this.goto();
-      await this.jsClick(this.irAperturaCaja);
+      await clickCustom(this.irAperturaCaja);
       // El modal "Factura en curso" aparece al intentar entrar a otro módulo.
       await this.resolverBloqueos();
       if (!this.page.url().includes('box-opening')) {
-        await this.jsClick(this.irAperturaCaja);
+        await clickCustom(this.irAperturaCaja);
       }
       const apertura = new BoxOpeningPage(this.page);
       await apertura.esperarCargada();

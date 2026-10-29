@@ -103,7 +103,7 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 | `#mf_person_customer_search_*` (persona) | `components/PersonSearchComponent.ts` |
 | `#admin_authorization_card_scan_input` / `_pass_input` | `SupervisorAuthDialog.ts` |
 | `#mf_pay_pycca_direct_credit_form_*` (crédito PYCCA) | `PaymentPage.ts` (clase `CreditoPyccaForm`) |
-| `text=IR >> nth=0..4` (dashboard) | `DashboardPage.ts` |
+| `p-panel.custom-panel-dashboard` filtrado por título + `button:has-text("IR")` (dashboard) | `DashboardPage.ts` |
 | `input[placeholder="Ej: 123456"]`, `Ej: 1234567890` (oferta especial) | `CargarFacturaDialog.ts` |
 | `#mf_sale_delivery_product_list_table_quantity_delivery_input_${sku}` | `DeliveryPage.ts` |
 | `#mf_product_search_product_input` (buscador SKU) | `InvoicePage.ts` |
@@ -139,7 +139,7 @@ Los selectores viven como campos privados de la Page correspondiente. Mapa rápi
 - **Reimpresión (D-01, 1.13.0):** "No hay documentos para imprimir" es un aviso **efímero** (pocos segundos tras la autorización); `PrintHistoryPage` lo escucha mientras autoriza (`sinDocumentosVisto`).
 - **No correr dos suites a la vez en el servidor:** `npm run test:casoN` ejecuta `clean`, que borra `evidencias/test-results` y rompe los traces de la otra corrida (`ENOENT … .trace`); además comparten caja.
 - Tras pagar puede aparecer **modal de regalo** → elegir uno → recalcular saldo. Desde rc.5 cada regalo es un `input[type=radio]` dentro del dialog (no `tbody tr`); "Aceptar" queda disabled hasta marcar uno.
-- **Wrappers `lib-button` / `p-button` (rc.5):** `el.click()` sobre el custom element NO dispara el ngClick. Hay que clickear el `<button>` interno (helper `clickCustom` en `InvoicePage` / `PersonSearchComponent`). Afecta: suspender, entrega futura, recuperar suspendida, lupa cargar factura, buscar cliente, Agregar, Continuar de `/pay`.
+- **Wrappers `lib-button` / `p-button` (rc.5):** `el.click()` sobre el custom element NO dispara el ngClick. Hay que clickear el `<button>` interno (helper único `clickCustom`, exportado desde `tests/fixtures/dataset.ts` desde el 2026-10-29; antes estaba duplicado como `clickCustom`/`jsClick`/`clickInterno` en 4 clases). Afecta: suspender, entrega futura, recuperar suspendida, lupa cargar factura, buscar cliente, Agregar, Continuar de `/pay`.
 - **Botones duplicados:** en `/invoice` y `/pay` hay un "Continuar" disabled en el header; `button:has-text("Continuar").first()` lo toma. Usar siempre los ids.
 - **Buscador de persona en `/delivery`:** coexisten dos instancias con los mismos ids (facturación oculta + "Envío a"). Filtrar con `:visible`. `#mf_person_customer_search_add_button` = **agregar cliente nuevo**, no limpiar.
 - **Suspender / Entrega futura** solo se renderizan con ≥1 producto en el carrito.
@@ -163,7 +163,7 @@ Los valores del summary panel **no tienen id**. Se leen por estructura dentro de
 | **Pendiente** | `<span>Pendiente</span>` + **único `<h1>`** del panel | **Monto exacto a pagar**; Continuar exige que sea $0 |
 
 En `/pos-ui/invoice` el resumen sí tiene ids: `#mf_sale_discount_value`, `#mf_sale_subtotal_value`, `#mf_sale_taxable_base_value` (aparece **dos veces**: base IVA y base 0%), `#mf_sale_total_tax_value` (IVA 15%), `#mf_sale_total_value`. Total = base imponible + impuesto. No hay rubros de envío ni recargo en una venta en tienda.
-- **Dashboard rc.5:** 16 módulos (nuevos: Abonos y Crédito Pycca, Cambio y devolución, Reverso de Abono). Los `nth` usados (0,3,4,8) siguen valiendo por casualidad.
+- **Dashboard rc.5:** 16 módulos (nuevos: Abonos y Crédito Pycca, Cambio y devolución, Reverso de Abono). Ya no se usan `nth`: desde el 2026-10-29 `DashboardPage` ubica cada tarjeta por su título visible, así que un alta o reordenamiento de módulos ya no mueve la navegación.
 - **"Factura en curso":** si un run aborta con carrito abierto, el dashboard bloquea Apertura con ese modal. Ir a Facturación → Regresar → "Sí, eliminar".
 
 ### FE `pbd-9-sync-develop` (2026-10-19 → 27)
@@ -177,6 +177,7 @@ En `/pos-ui/invoice` el resumen sí tiene ids: `#mf_sale_discount_value`, `#mf_s
 - **Calendario de entrega futura:** el click en "Elige fecha" a veces no despliega el panel (no llega al DOM). `DeliveryPage.elegirFechaEntrega()` reintenta y, si el mes no tiene días habilitados, avanza un mes.
 - **Carrito con tope:** `cargarCarritoConTope(min, max)` agrega SKUs de a 1 y, si el pool se agota bajo el mínimo, sube la cantidad de un artículo ya cargado (del último hacia atrás) calculando las unidades con su precio unitario, sin pasar el tope. Verificado: 10 SKUs de 004-112 ($749.69) → `Y10974 x23` → $1,002.69. Devuelve `ItemCarrito[]` con cantidades (lo usa la entrega futura).
 - **"Target page, context or browser has been closed"** a los ~2 s de arrancar = se cerró la ventana de Chromium (típico en `--headed`), no es un fallo de la suite.
+- **Tarjetas del dashboard (DOM real, 2026-10-29, FE 1.12.0-rc.7 / 15 módulos):** cada tarjeta es un `<p-panel class="__custom_panel ... custom-panel-dashboard no-header">` con `<h2>` de título, descripción y un `<lib-button><p-button id="button_button.go">`. **Los 15 botones "IR" comparten el mismo `id="button_button.go"`** y el `pn_id_NN` del `<div>` panel lo autogenera PrimeNG en cada render: no hay ningún id utilizable para distinguir módulos. Por eso `DashboardPage.tarjetaIr(titulo)` filtra el `p-panel` por su título exacto.
 
 ## Estado conocido
 

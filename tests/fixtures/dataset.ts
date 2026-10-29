@@ -1,12 +1,13 @@
-import { Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 import { CENTROS_DATA, type DatosCentro } from './centros';
 
 /* ============================================================================
  * DATASET — datos de prueba y utilidades puras.
  *
- * Capa separada de las Pages: NO contiene selectores ni interacciones con el
- * DOM, solo valores y helpers de propósito general reutilizables en toda la
- * suite.
+ * Capa separada de las Pages: NO contiene selectores propios de una pantalla,
+ * solo valores y helpers de propósito general reutilizables en toda la suite
+ * (incluidos los utilitarios de DOM genéricos: `clickCustom`,
+ * `seleccionarEnDropdown`, `cerrarDialogos`, `mockImpresion` y `evidencia`).
  * ==========================================================================*/
 
 /* ----------------------------------------------------------------------------
@@ -133,6 +134,26 @@ export const numeroDeCuotas = (texto: string): number =>
 
 export async function evidencia(page: Page, nombre: string): Promise<void> {
   await page.screenshot({ path: `./evidencias/${nombre}.png`, fullPage: true });
+}
+
+/**
+ * Click en el <button> real de un wrapper `lib-button` / `p-button`: el
+ * ngClick de Angular vive en el <button> interno, así que un
+ * `evaluate(el => el.click())` sobre el custom element no dispara el handler
+ * en PrimeNG v18. Si el locator ya apunta a un <button>, lo clickea directo.
+ *
+ * Va por JS y no por mouse porque `DashboardPage.goto()` pone
+ * `pointer-events: none` en las máscaras de diálogo (y eso se hereda a los
+ * botones de adentro), de modo que un click de mouse no llega. El fallback a
+ * `click({ force: true })` cubre el caso en que el evaluate falle.
+ */
+export async function clickCustom(locator: Locator): Promise<void> {
+  await locator
+    .evaluate((el: HTMLElement) => {
+      const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
+      btn?.click();
+    })
+    .catch(async () => locator.click({ force: true }));
 }
 
 /**
