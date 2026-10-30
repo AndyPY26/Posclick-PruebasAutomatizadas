@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { montoDe } from '../fixtures/dataset';
+import { clickCustom, montoDe } from '../fixtures/dataset';
 
 /**
  * Pantalla de cobro (/pos-ui/pay).
@@ -57,16 +57,6 @@ export class PaymentPage {
         await this.page.waitForTimeout(2_000);
       }
     }
-  }
-
-  /** Click en el <button> real de un wrapper lib-button/p-button (el ngClick vive ahí). */
-  private async clickInterno(locator: Locator): Promise<void> {
-    await locator
-      .evaluate((el: HTMLElement) => {
-        const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
-        btn?.click();
-      })
-      .catch(async () => locator.click({ force: true }));
   }
 
   /**
@@ -185,7 +175,7 @@ export class PaymentPage {
       await this.inputPrincipal.fill(monto.toFixed(2));
       await this.inputPrincipal.press('Tab');
       await this.page.waitForTimeout(700);
-      await this.clickInterno(this.agregarBtn);
+      await clickCustom(this.agregarBtn);
       await this.page.waitForTimeout(2_000);
     }
     throw new Error('El pendiente no llegó a $0 tras 15 pagos en efectivo.');
@@ -201,7 +191,7 @@ export class PaymentPage {
   async pagarEnEfectivo(): Promise<void> {
     for (let ronda = 0; ronda < 3; ronda++) {
       await this.registrarEfectivoHastaCubrir();
-      await this.clickInterno(this.continuarBtn);
+      await clickCustom(this.continuarBtn);
       await this.page.waitForTimeout(2_000);
       if (!(await this.resolverRegaloSiAplica())) break;
       const r = await this.leerResumen();
@@ -256,7 +246,7 @@ export class PaymentPage {
     await this.recibidoInput.pressSequentially(pagar.toFixed(2));
     await this.recibidoInput.press('Tab');
     await this.page.waitForTimeout(800);
-    await this.clickInterno(this.aceptarRegistroEfectivoBtn);
+    await clickCustom(this.aceptarRegistroEfectivoBtn);
     await titulo.waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => undefined);
     await this.page.waitForTimeout(1_500);
     return true;

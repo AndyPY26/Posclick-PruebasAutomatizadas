@@ -1,6 +1,6 @@
 import { Page, expect, Locator } from '@playwright/test';
 import type { ItemCarrito } from '../fixtures/dataset';
-import { generarImei, montoDe, skuPool } from '../fixtures/dataset';
+import { clickCustom, generarImei, montoDe, skuPool } from '../fixtures/dataset';
 import { PersonSearchComponent } from './components/PersonSearchComponent';
 import { CargarFacturaDialog } from './CargarFacturaDialog';
 import { SuspendedTxDialog } from './SuspendedTxDialog';
@@ -143,24 +143,10 @@ export class InvoicePage {
     return pay;
   }
 
-  /**
-   * Helper: click que atraviesa wrappers lib-button/p-button y dispara el
-   * handler Angular del <button> interno. Un simple `evaluate(el=>el.click())`
-   * sobre el custom element no bubble el handler en PrimeNG v18.
-   */
-  private async clickCustom(locator: Locator): Promise<void> {
-    await locator
-      .evaluate((el: HTMLElement) => {
-        const btn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') as HTMLElement | null);
-        btn?.click();
-      })
-      .catch(async () => locator.click({ force: true }));
-  }
-
   /** Entrega futura: selecciona todo + autoriza supervisor + navega a /delivery. */
   async irAEntregaFuturaConAutorizacion(): Promise<DeliveryPage> {
     await this.checkboxTodos.first().evaluate((el: HTMLElement) => el.click());
-    await this.clickCustom(this.entregaFuturaBtn);
+    await clickCustom(this.entregaFuturaBtn);
     const auth = new SupervisorAuthDialog(this.page);
     await auth.autorizar();
     const delivery = new DeliveryPage(this.page);
@@ -171,7 +157,7 @@ export class InvoicePage {
   /** Variante que NO autoriza: útil para validar que el modal aparece (Caso 4). */
   async abrirEntregaFutura(): Promise<SupervisorAuthDialog> {
     await this.checkboxTodos.first().evaluate((el: HTMLElement) => el.click());
-    await this.clickCustom(this.entregaFuturaBtn);
+    await clickCustom(this.entregaFuturaBtn);
     return new SupervisorAuthDialog(this.page);
   }
 
@@ -359,7 +345,7 @@ export class InvoicePage {
 
   /** Quita una fila del carrito con el tacho de esa fila (+ confirmación si aparece). */
   async quitarProducto(sku: string): Promise<void> {
-    await this.clickCustom(this.page.locator(`#mf_sale_product_list_table_trash_${sku}`));
+    await clickCustom(this.page.locator(`#mf_sale_product_list_table_trash_${sku}`));
     await this.page.waitForTimeout(1_200);
     await this.confirmarEliminarBtn
       .first()
@@ -392,9 +378,9 @@ export class InvoicePage {
   async suspender(): Promise<void> {
     // suspenderBtn es un lib-button; clickCustom asegura disparar ngClick del
     // <button> interno aunque haya máscaras p-dialog-mask residuales.
-    await this.clickCustom(this.suspenderBtn);
+    await clickCustom(this.suspenderBtn);
     await expect(this.dialogoSuspender).toBeVisible();
-    await this.clickCustom(this.confirmarSuspension.first());
+    await clickCustom(this.confirmarSuspension.first());
     await this.page.waitForTimeout(3_000);
     await expect(this.carritoVacio).toBeVisible();
   }
@@ -405,14 +391,14 @@ export class InvoicePage {
   }
 
   async abrirRecuperarSuspendida(): Promise<SuspendedTxDialog> {
-    await this.clickCustom(this.recuperarSuspendidaBtn);
+    await clickCustom(this.recuperarSuspendidaBtn);
     const dialog = new SuspendedTxDialog(this.page);
     await dialog.esperarVisible();
     return dialog;
   }
 
   async abrirRecuperarSuspendidaRaw(): Promise<SuspendedTxDialog> {
-    await this.clickCustom(this.recuperarSuspendidaBtn);
+    await clickCustom(this.recuperarSuspendidaBtn);
     await this.page.waitForTimeout(2_500);
     return new SuspendedTxDialog(this.page);
   }
@@ -422,7 +408,7 @@ export class InvoicePage {
    * ==========================================================================*/
 
   async abrirCargarFactura(): Promise<CargarFacturaDialog> {
-    await this.clickCustom(this.abrirCargarFacturaBtn);
+    await clickCustom(this.abrirCargarFacturaBtn);
     const dialog = new CargarFacturaDialog(this.page);
     await dialog.esperarVisible();
     return dialog;
